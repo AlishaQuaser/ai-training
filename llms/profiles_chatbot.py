@@ -26,7 +26,7 @@ class ChatBot:
 
         return:
         """
-        # pass
+
         mongo_uri = os.getenv("MONGO_URI")
         if not mongo_uri:
             print("You need to set MONGO_URI in your environment variables.")
