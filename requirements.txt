@@ -1,6 +1,7 @@
 python-dotenv~=1.0.1
 mistralai~=1.5.0
-google-generativeai
-pymongo>=4.6.1
+pymongo~=4.11
+langchain~=0.3.20
+langchain-core~=0.3.45
 # ~= means install this version or newer within the same major/minor (e.g. ~=1.5.0 allows 1.5.1, 1.5.9 but not 1.6.0)
 groq
