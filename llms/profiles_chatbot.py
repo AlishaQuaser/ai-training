@@ -45,7 +45,7 @@ class ChatBot:
 
         for profile in profiles:
             full_name = f"{profile.get('firstName', '')} {profile.get('lastName', '')}".strip()
-            area = profile.get('areaOfExpertise', 'Not specified')
+            area_of_expertise = profile.get('areaOfExpertise', 'Not specified')
             location = profile.get('currentLocation', {})
             location_str = f"{location.get('city', '')}, {location.get('state', '')}, {location.get('country', '')}"
             summary = profile.get('carrierSummary', 'No summary provided.')
@@ -67,7 +67,7 @@ class ChatBot:
 
             profile_string = f"""
             Name: {full_name}
-            Expertise: {area}
+            Expertise: {area_of_expertise}
             Location: {location_str}
             Summary: {summary}
     
