@@ -2,6 +2,7 @@
 
 import os
 from pymongo import MongoClient
+from langchain_community.document_loaders import PyPDFLoader
 from dotenv import load_dotenv
 
 load_dotenv()  # Load env variables from .env file
@@ -65,3 +66,11 @@ def load_profiles_from_db():
         all_profiles_string += profile_string.strip() + "\n\n"
 
     return f"You are provided with multiple user profiles: \n\n{all_profiles_string.strip()}"
+
+
+def load_pdf_documents(file_path: str):
+    """Loads a PDF file into a list of Document objects using PyPDFLoader."""
+    loader = PyPDFLoader(file_path)
+    docs = loader.load()
+    return docs
+
