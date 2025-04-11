@@ -9,11 +9,11 @@ from base import load_pdf_documents
 load_dotenv()
 
 
-def main():
+if __name__ == "__main__":
     api_key = os.getenv("MISTRAL_API_KEY")
     if api_key is None:
         print("Please set environment variable MISTRAL_API_KEY")
-        return
+        exit(1)
 
     file_path = "C:/Users/user/Desktop/Alisha/google genai 5 days workshop/nke-10k-2023.pdf"
     docs = load_pdf_documents(file_path)
@@ -55,5 +55,4 @@ def main():
     print(vector_results[0].page_content)
 
 
-if __name__ == "__main__":
-    main()
+
