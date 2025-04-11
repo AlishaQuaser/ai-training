@@ -1,5 +1,3 @@
-# base.py
-
 import os
 from pymongo import MongoClient
 from langchain_community.document_loaders import PyPDFLoader
