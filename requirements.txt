@@ -5,5 +5,8 @@ langchain~=0.3.20
 langchain-core~=0.3.45
 langchain-community>=0.3.21
 langchain-mistralai>=0.2.10
+llama-index
+llama-index-embeddings-mistralai
+llama-index-llms-mistralai
 # ~= means install this version or newer within the same major/minor (e.g. ~=1.5.0 allows 1.5.1, 1.5.9 but not 1.6.0)
 groq

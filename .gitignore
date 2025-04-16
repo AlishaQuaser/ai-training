@@ -75,3 +75,12 @@ coverage.xml
 pylint-report.txt
 *.pyc
 
+# LlamaIndex / embeddings / vectorstore artifacts
+index_store/
+storage/
+*.json
+*.pkl
+*.db
+*.faiss
+
+
