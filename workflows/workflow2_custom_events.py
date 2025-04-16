@@ -3,7 +3,6 @@ from llama_index.utils.workflow import draw_all_possible_flows
 import os
 
 
-# Define custom event classes
 class FirstEvent(Event):
     first_output: str
 

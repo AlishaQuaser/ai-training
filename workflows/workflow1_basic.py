@@ -7,7 +7,6 @@ from llama_index.utils.workflow import draw_all_possible_flows
 class MyWorkflow(Workflow):
     @step
     async def my_step(self, ev: StartEvent) -> StopEvent:
-        # do something here
         return StopEvent(result="Hello, world!")
 
 

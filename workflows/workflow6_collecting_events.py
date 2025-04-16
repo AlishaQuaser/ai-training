@@ -14,7 +14,6 @@ class StepThreeEvent(Event):
 class ConcurrentFlow(Workflow):
     @step
     async def start(self, ctx: Context, ev: StartEvent) -> StepTwoEvent:
-        # Send multiple events in parallel to StepTwo
         ctx.send_event(StepTwoEvent(query="Query 1"))
         ctx.send_event(StepTwoEvent(query="Query 2"))
         ctx.send_event(StepTwoEvent(query="Query 3"))
