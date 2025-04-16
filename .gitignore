@@ -83,4 +83,6 @@ storage/
 *.db
 *.faiss
 
+*.html
+
 
