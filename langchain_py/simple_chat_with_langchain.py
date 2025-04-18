@@ -16,7 +16,7 @@ if __name__ == '__main__':
     model = init_chat_model("mistral-large-latest", model_provider="mistralai")
     # Define the list of messages for the conversation
     messages = [
-        SystemMessage("Translate the following into Hindi"),
+        SystemMessage("Translate the following into Spanish"),
         HumanMessage("My name is Alisha and I stay in Bhopal!"),
     ]
     # response = model.invoke(messages)
