@@ -28,10 +28,12 @@ def setup_mistral_llm():
     mistral_api_key = os.getenv("MISTRAL_API_KEY")
     return MistralAI(model="mistral-large-latest", api_key=mistral_api_key)
 
+
 def setup_mistral_embedding():
     load_dotenv()
     mistral_api_key = os.getenv("MISTRAL_API_KEY")
     return MistralAIEmbedding(model="mistral-embed", api_key=mistral_api_key)
+
 
 def load_query_engine():
     Settings.embed_model = setup_mistral_embedding()
@@ -44,8 +46,10 @@ def load_query_engine():
     query_engine = index.as_query_engine(llm=llm, similarity_top_k=5)
     return query_engine, llm
 
+
 class QueryEvent(Event):
     query: str
+
 
 class RAGWorkflow(Workflow):
     storage_dir = "./storage"
@@ -93,6 +97,8 @@ class RAGWorkflow(Workflow):
     async def ask_question(self, ctx: Context, ev: QueryEvent) -> StopEvent:
         response = self.query_engine.query(f"This is a question about the specific resume we have in our database: {ev.query}")
         return StopEvent(result=response.response)
+
+
 async def main():
     w = RAGWorkflow(timeout=120, verbose=False)
     result = await w.run(
