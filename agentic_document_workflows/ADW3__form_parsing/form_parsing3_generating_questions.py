@@ -257,7 +257,7 @@ async def main():
     w = RAGWorkflow(timeout=300, verbose=False)
     result = await w.run(
         resume_file="C:/Users/user/Desktop/fake_resume.pdf",
-        application_form="C:/Users/user/Desktop/fake_application_form.pdf"
+        application_form="C:/Users/user/Desktop/application_form.pdf"
     )
     print(result)
 
