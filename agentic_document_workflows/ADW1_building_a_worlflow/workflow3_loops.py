@@ -20,10 +20,10 @@ class MyWorkflow(Workflow):
     @step
     async def step_one(self, ev: StartEvent | LoopEvent) -> FirstEvent | LoopEvent:
         if random.randint(0, 1) == 0:
-            print("Bad thing happened")
+            print("Condition not met. Restarting step one...")
             return LoopEvent(loop_output="Back to step one.")
         else:
-            print("Good thing happened")
+            print("Condition met. Proceeding to the next step.")
             return FirstEvent(first_output="First step complete.")
 
     @step
