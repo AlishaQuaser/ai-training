@@ -25,7 +25,6 @@ from tenacity import retry, wait_exponential, stop_after_attempt
 load_dotenv()
 nest_asyncio.apply()
 
-# Directory where your profile index is stored
 PROFILE_INDEX_DIR = "./profile_index"
 CACHE_DIR = "./query_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -71,7 +70,7 @@ def setup_mistral_llm():
 
 
 def setup_mistral_client():
-    return Mistral()  # Will use the API key from environment variables
+    return Mistral()
 
 def extract_json(text):
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
@@ -102,7 +101,6 @@ def get_profiles_from_database():
         db = client["app-dev"]
         collection = db["profiles"]
 
-        # Update fields to match those in your profile index creation script
         fields_to_retrieve = {
             "firstName": 1,
             "lastName": 1,
@@ -120,7 +118,7 @@ def get_profiles_from_database():
             return []
 
         for profile in profiles:
-            profile["_id"] = str(profile["_id"])  # Convert ObjectId to string
+            profile["_id"] = str(profile["_id"])
 
         print(f"Fetched {len(profiles)} profiles from the database")
         return profiles
@@ -137,7 +135,6 @@ def encode_text(text, mistral_client):
         model="mistral-embed",
         input=text
     )
-    # Return the embedding vector
     return np.array(response.data[0].embedding)
 
 
@@ -164,19 +161,15 @@ class JobMatchingWorkflow(Workflow):
         if not ev.job_description:
             raise ValueError("No job description provided")
 
-        # Set up Mistral LLM and client
         self.llm = setup_mistral_llm()
         self.mistral_client = setup_mistral_client()
 
-        # Set default models for LlamaIndex to use Mistral throughout
         mistral_embed = MistralAIEmbedding(model_name="mistral-embed")
         mistral_llm = MistralAI(model="mistral-large-latest")
 
-        # Configure global settings for LlamaIndex
         Settings.embed_model = mistral_embed
         Settings.llm = mistral_llm
 
-        # Load the index from storage
         try:
             storage_context = StorageContext.from_defaults(persist_dir=PROFILE_INDEX_DIR)
             self.index = load_index_from_storage(storage_context=storage_context)
@@ -185,7 +178,6 @@ class JobMatchingWorkflow(Workflow):
             print(f"Error loading index: {e}")
             raise
 
-        # Get profile data for enriching the results later
         self.profiles = get_profiles_from_database()
         print(f"Working with {len(self.profiles)} profiles")
 
@@ -234,11 +226,9 @@ class JobMatchingWorkflow(Workflow):
     async def query_candidates_per_requirement(self, ctx: Context, ev: ExtractRequirementsEvent) -> RankCandidatesEvent:
         job_description = await ctx.get("job_description")
 
-        # Use the index to query for relevant profiles with explicit LLM to avoid defaults
         query_engine = self.index.as_query_engine(llm=self.llm)
         response = query_engine.query(job_description)
 
-        # Get the top matching nodes
         retrieved_nodes = response.source_nodes
         if not retrieved_nodes:
             print("No matching profiles found")
@@ -246,13 +236,10 @@ class JobMatchingWorkflow(Workflow):
 
         print(f"Found {len(retrieved_nodes)} matching profile nodes")
 
-        # Process matched candidates
         all_matched_candidates = {}
         for node in retrieved_nodes:
-            # Extract the profile text
             profile_text = node.node.text
 
-            # Extract name from the profile text to match with database profiles
             name_match = re.search(r"Name: (.*?)[\n]", profile_text)
             if not name_match:
                 continue
@@ -260,7 +247,6 @@ class JobMatchingWorkflow(Workflow):
             full_name = name_match.group(1).strip()
             first_name, *last_name_parts = full_name.split()
 
-            # Find corresponding profile in database
             matching_profile = None
             for profile in self.profiles:
                 db_first_name = profile.get('firstName', '')
@@ -282,13 +268,10 @@ class JobMatchingWorkflow(Workflow):
                     "avg_score": 0
                 }
 
-            # Calculate scores for each requirement category
             requirements = ev.requirements
             for category, req_details in requirements.items():
-                # Use the similarity score from the vector search
                 all_matched_candidates[profile_id]["scores"][category] = similarity_score
 
-        # Calculate average scores and prepare the final list
         candidates_list = []
         for profile_id, candidate_data in all_matched_candidates.items():
             scores = list(candidate_data["scores"].values())
@@ -297,7 +280,6 @@ class JobMatchingWorkflow(Workflow):
                 candidate_data["avg_score"] = avg_score
                 candidates_list.append(candidate_data)
 
-        # Sort by average score and take top 10
         candidates_list.sort(key=lambda x: x["avg_score"], reverse=True)
         top_candidates = candidates_list[:10]
 
@@ -324,19 +306,16 @@ class JobMatchingWorkflow(Workflow):
             profile = candidate["profile"]
             scores = candidate["scores"]
 
-            # Create a profile text using the fields from your index generation script
             candidate_text = f"Candidate {i+1}:\n"
             candidate_text += f"Name: {profile.get('firstName', '')} {profile.get('lastName', '')}\n"
             candidate_text += f"Area of Expertise: {profile.get('areaOfExpertise', 'Not specified')}\n"
 
-            # Location information
             location = profile.get('currentLocation', {})
             location_str = f"{location.get('city', '')}, {location.get('state', '')}, {location.get('country', '')}"
             candidate_text += f"Location: {location_str}\n"
 
             candidate_text += f"Career Summary: {profile.get('carrierSummary', 'Not provided')}\n"
 
-            # Education details
             education_entries = profile.get('education', [])
             if education_entries:
                 candidate_text += "Education:\n"
@@ -346,7 +325,6 @@ class JobMatchingWorkflow(Workflow):
                     start_date = edu.get('startDate', 'Unknown date')
                     candidate_text += f"- {degree} at {institute} ({start_date})\n"
 
-            # Experience details
             experience_entries = profile.get('experience', [])
             if experience_entries:
                 candidate_text += "Experience:\n"
@@ -356,7 +334,6 @@ class JobMatchingWorkflow(Workflow):
                     start_date = exp.get('startDate', 'Unknown date')
                     candidate_text += f"- {position} at {company} ({start_date})\n"
 
-            # Skills
             highlighted_skills = profile.get('highlightedSkills', [])
             if highlighted_skills:
                 candidate_text += "Highlighted Skills: "
