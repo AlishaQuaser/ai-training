@@ -33,7 +33,6 @@ def get_random_profiles_from_db(limit=50):
         print("No profiles found in the database.")
         exit(1)
 
-    # Get a random sample of 50 profiles
     random_profiles = random.sample(total_profiles, min(limit, len(total_profiles)))
     return random_profiles
 
@@ -80,7 +79,7 @@ def prepare_documents_from_profiles(profiles):
         """
 
         documents.append(Document(text=profile_string.strip()))
-        time.sleep(1.5)  # Sleep to avoid rate limiting
+        time.sleep(1.5)
 
     return documents
 
