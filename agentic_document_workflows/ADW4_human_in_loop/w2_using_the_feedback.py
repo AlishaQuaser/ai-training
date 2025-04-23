@@ -123,7 +123,7 @@ class FeedbackEvent(Event):
 
 
 class GenerateQuestionsEvent(Event):
-    pass
+    is_feedback_iteration: bool = False
 
 
 class RAGWorkflow(Workflow):
@@ -133,6 +133,8 @@ class RAGWorkflow(Workflow):
 
     @step
     async def set_up(self, ctx: Context, ev: StartEvent) -> ParseFormEvent:
+        await ctx.set("responses", {})
+
         if not ev.resume_file:
             raise ValueError("No resume file provided")
 
@@ -233,21 +235,35 @@ class RAGWorkflow(Workflow):
             cache_response(cache_key, fields)
 
         await ctx.set("fields_to_fill", fields)
-        return GenerateQuestionsEvent()
+        await ctx.set("responses", {})
+        return GenerateQuestionsEvent(is_feedback_iteration=False)
 
     @step
     async def generate_questions(self, ctx: Context, ev: GenerateQuestionsEvent | FeedbackEvent) -> QueryEvent:
         fields = await ctx.get("fields_to_fill")
         print(f"Generating questions for {len(fields)} fields")
 
+        is_feedback_iteration = False
+        feedback = ""
+
+        if isinstance(ev, FeedbackEvent):
+            feedback = ev.feedback
+            print(f"Processing with feedback: {feedback[:100]}...")
+            is_feedback_iteration = True
+        elif hasattr(ev, "is_feedback_iteration"):
+            is_feedback_iteration = ev.is_feedback_iteration
+
+        await ctx.set("is_feedback_iteration", is_feedback_iteration)
+        await ctx.set("feedback", feedback)
+
         for field in fields:
             question = f"How would you answer this question about the candidate? <field>{field}</field>"
 
-            if hasattr(ev, "feedback"):
+            if feedback:
                 question += f"""
                     \nWe previously got feedback about how we answered the questions.
                     It might not be relevant to this particular field, but here it is:
-                    <feedback>{ev.feedback}</feedback>
+                    <feedback>{feedback}</feedback>
                 """
 
             ctx.send_event(QueryEvent(
@@ -262,27 +278,34 @@ class RAGWorkflow(Workflow):
     async def ask_question(self, ctx: Context, ev: QueryEvent) -> ResponseEvent:
         print(f"Processing field: {ev.field}")
 
-        has_feedback = "<feedback>" in ev.query
+        try:
+            responses = await ctx.get("responses")
+        except:
+            responses = {}
+            await ctx.set("responses", responses)
 
-        if not has_feedback:
+        is_feedback_iteration = False
+        try:
+            is_feedback_iteration = await ctx.get("is_feedback_iteration")
+        except:
+            await ctx.set("is_feedback_iteration", False)
+
+        if not is_feedback_iteration:
             cache_key = f"query_{get_cache_key(ev.query)}"
             cached_response = get_cached_response(cache_key)
 
             if cached_response:
                 print(f"Using cached response for field: {ev.field}")
+
+                responses[ev.field] = cached_response
+                await ctx.set("responses", responses)
+
                 return ResponseEvent(field=ev.field, response=cached_response)
 
         await asyncio.sleep(1)
         print(f"Querying resume data for field: {ev.field}")
 
-        enhanced_query = f"""
-        This is a question about a candidate's resume. I need to find relevant information to fill out 
-        this application form field: "{ev.field}"
-        
-        Please extract specific information from the resume that would be appropriate for this field.
-        If no direct information is available, suggest a reasonable response based on related information
-        in the resume. Please be specific and detailed.
-        """
+        enhanced_query = f"This is a question about the specific resume we have in our database: {ev.query}"
 
         response = api_call_with_retry(
             self.query_engine.query,
@@ -292,8 +315,11 @@ class RAGWorkflow(Workflow):
 
         print(f"Response for {ev.field}: {response_text[:100]}...")
 
-        if not has_feedback:
+        if not is_feedback_iteration:
             cache_response(ev.query, response_text)
+
+        responses[ev.field] = response_text
+        await ctx.set("responses", responses)
 
         return ResponseEvent(field=ev.field, response=response_text)
 
@@ -306,7 +332,32 @@ class RAGWorkflow(Workflow):
             return None
 
         print(f"Collected all {len(responses)} responses, generating final form")
-        responseList = "\n".join(f"Field: {r.field}\nResponse: {r.response}" for r in responses)
+
+        try:
+            stored_responses = await ctx.get("responses")
+        except:
+            stored_responses = {r.field: r.response for r in responses}
+            await ctx.set("responses", stored_responses)
+
+        responseList = "\n".join(
+            f"Field: {r.field}\nResponse: {stored_responses.get(r.field, r.response)}"
+            for r in responses
+        )
+
+        feedback = ""
+        try:
+            feedback = await ctx.get("feedback") or ""
+        except:
+            pass
+
+        feedback_prompt = ""
+        if feedback:
+            feedback_prompt = f"""
+            Consider this feedback when preparing the final answers:
+            <feedback>
+            {feedback}
+            </feedback>
+            """
 
         await asyncio.sleep(1)
         result = api_call_with_retry(
@@ -317,6 +368,8 @@ class RAGWorkflow(Workflow):
             fields and specific, detailed answers to fill in those fields. Do not use
             "not provided" unless there's absolutely no relevant information in the responses.
             Be creative but factual based on what's in the responses.
+            
+            {feedback_prompt}
 
             <responses>
             {responseList}
@@ -348,6 +401,13 @@ class RAGWorkflow(Workflow):
         )
 
         verdict = result.text.strip()
+
+        if "OKAY" in verdict:
+            verdict = "OKAY"
+        elif "FEEDBACK" in verdict:
+            verdict = "FEEDBACK"
+        else:
+            verdict = "FEEDBACK"
 
         print(f"LLM says the verdict was {verdict}")
         if verdict == "OKAY":
