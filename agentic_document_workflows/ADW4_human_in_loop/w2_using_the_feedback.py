@@ -6,7 +6,8 @@ from llama_index.embeddings.mistralai import MistralAIEmbedding
 from llama_index.core import (
     VectorStoreIndex,
     StorageContext,
-    load_index_from_storage
+    load_index_from_storage,
+    Document
 )
 from llama_index.core.settings import Settings
 from llama_index.core.workflow import (
@@ -27,8 +28,8 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 load_dotenv()
 nest_asyncio.apply()
 
-PERSIST_DIR = "./storage"
-CACHE_DIR = "./query_cache"
+PERSIST_DIR = "./storage2"
+CACHE_DIR = "./query_cache2"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 
@@ -78,18 +79,29 @@ def setup_mistral_embedding():
     mistral_api_key = os.getenv("MISTRAL_API_KEY")
     return MistralAIEmbedding(model="mistral-embed", api_key=mistral_api_key)
 
+
+def chunk_text(text, chunk_size=500):
+    """Chunk the text into smaller parts to avoid size limitations."""
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+
 Settings.embed_model = setup_mistral_embedding()
 
 
 def extract_json(text):
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if match:
-        return json.loads(match.group(1))
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            print("Warning: Could not parse JSON from code block")
+
     try:
         return json.loads(text)
-    except:
+    except json.JSONDecodeError:
         print("Warning: Could not parse JSON, returning empty object")
-        return {}
+        print(f"JSON text was: {text[:100]}...")
+        return {"fields": []}
 
 
 class ParseFormEvent(Event):
@@ -115,7 +127,7 @@ class GenerateQuestionsEvent(Event):
 
 
 class RAGWorkflow(Workflow):
-    storage_dir = "./storage"
+    storage_dir = "./storage2"
     llm: MistralAI
     query_engine: VectorStoreIndex
 
@@ -130,15 +142,20 @@ class RAGWorkflow(Workflow):
         self.llm = setup_mistral_llm()
 
         if os.path.exists(self.storage_dir):
+            print("Loading existing index from storage")
             storage_context = StorageContext.from_defaults(persist_dir=self.storage_dir)
             index = load_index_from_storage(storage_context)
         else:
+            print("Creating new index from resume")
             cache_key = f"resume_{get_cache_key(ev.resume_file)}"
             cached_documents = get_cached_response(cache_key)
 
             if cached_documents:
-                documents = cached_documents
+                print("Using cached resume content")
+                documents_text = cached_documents
+                documents = [Document(text=doc_text) for doc_text in documents_text]
             else:
+                print("Parsing resume with LlamaParse")
                 parser = LlamaParse(
                     api_key=os.getenv("LLAMA_CLOUD_API_KEY"),
                     base_url=os.getenv("LLAMA_CLOUD_BASE_URL"),
@@ -148,15 +165,24 @@ class RAGWorkflow(Workflow):
                 await asyncio.sleep(1)
                 documents = api_call_with_retry(parser.load_data, ev.resume_file)
 
-                cache_response(cache_key, [doc.text for doc in documents])
+                documents_text = [doc.text for doc in documents]
+                cache_response(cache_key, documents_text)
+
+            chunked_documents = []
+            for doc in documents:
+                chunks = chunk_text(doc.text, chunk_size=500)
+                chunked_documents.extend([Document(text=chunk) for chunk in chunks])
+
+            print(f"Created {len(chunked_documents)} chunks from resume")
 
             index = VectorStoreIndex.from_documents(
-                documents,
+                chunked_documents,
                 embed_model=setup_mistral_embedding()
             )
             index.storage_context.persist(persist_dir=self.storage_dir)
+            print("Index created and saved to storage")
 
-        self.query_engine = index.as_query_engine(llm=self.llm, similarity_top_k=5)
+        self.query_engine = index.as_query_engine(llm=self.llm, similarity_top_k=8)
 
         return ParseFormEvent(application_form=ev.application_form)
 
@@ -166,8 +192,10 @@ class RAGWorkflow(Workflow):
         cached_fields = get_cached_response(cache_key)
 
         if cached_fields:
+            print("Using cached form fields")
             fields = cached_fields
         else:
+            print("Parsing application form with LlamaParse")
             parser = LlamaParse(
                 api_key=os.getenv("LLAMA_CLOUD_API_KEY"),
                 base_url=os.getenv("LLAMA_CLOUD_BASE_URL"),
@@ -180,6 +208,7 @@ class RAGWorkflow(Workflow):
             result = api_call_with_retry(parser.load_data, ev.application_form)[0]
 
             await asyncio.sleep(1)
+            print("Extracting fields from parsed form")
             raw_json = api_call_with_retry(
                 self.llm.complete,
                 f"""
@@ -191,7 +220,16 @@ class RAGWorkflow(Workflow):
                 """
             )
 
-            fields = extract_json(raw_json.text).get("fields", [])
+            json_data = extract_json(raw_json.text)
+            fields = json_data.get("fields", [])
+
+            if not fields:
+                print("WARNING: No fields extracted from form. Raw JSON response:")
+                print(raw_json.text[:500])
+                fields = ["Field extraction failed - please check the application form"]
+            else:
+                print(f"Extracted {len(fields)} fields from form")
+
             cache_response(cache_key, fields)
 
         await ctx.set("fields_to_fill", fields)
@@ -200,6 +238,7 @@ class RAGWorkflow(Workflow):
     @step
     async def generate_questions(self, ctx: Context, ev: GenerateQuestionsEvent | FeedbackEvent) -> QueryEvent:
         fields = await ctx.get("fields_to_fill")
+        print(f"Generating questions for {len(fields)} fields")
 
         for field in fields:
             question = f"How would you answer this question about the candidate? <field>{field}</field>"
@@ -221,6 +260,8 @@ class RAGWorkflow(Workflow):
 
     @step
     async def ask_question(self, ctx: Context, ev: QueryEvent) -> ResponseEvent:
+        print(f"Processing field: {ev.field}")
+
         has_feedback = "<feedback>" in ev.query
 
         if not has_feedback:
@@ -228,14 +269,28 @@ class RAGWorkflow(Workflow):
             cached_response = get_cached_response(cache_key)
 
             if cached_response:
+                print(f"Using cached response for field: {ev.field}")
                 return ResponseEvent(field=ev.field, response=cached_response)
 
         await asyncio.sleep(1)
+        print(f"Querying resume data for field: {ev.field}")
+
+        enhanced_query = f"""
+        This is a question about a candidate's resume. I need to find relevant information to fill out 
+        this application form field: "{ev.field}"
+        
+        Please extract specific information from the resume that would be appropriate for this field.
+        If no direct information is available, suggest a reasonable response based on related information
+        in the resume. Please be specific and detailed.
+        """
+
         response = api_call_with_retry(
             self.query_engine.query,
-            f"This is a question about the specific resume we have in our database: {ev.query}"
+            enhanced_query
         )
         response_text = response.response
+
+        print(f"Response for {ev.field}: {response_text[:100]}...")
 
         if not has_feedback:
             cache_response(ev.query, response_text)
@@ -250,6 +305,7 @@ class RAGWorkflow(Workflow):
         if responses is None:
             return None
 
+        print(f"Collected all {len(responses)} responses, generating final form")
         responseList = "\n".join(f"Field: {r.field}\nResponse: {r.response}" for r in responses)
 
         await asyncio.sleep(1)
@@ -258,7 +314,9 @@ class RAGWorkflow(Workflow):
             f"""
             You are given a list of fields in an application form and responses to
             questions about those fields from a resume. Combine the two into a list of
-            fields and succinct, factual answers to fill in those fields.
+            fields and specific, detailed answers to fill in those fields. Do not use
+            "not provided" unless there's absolutely no relevant information in the responses.
+            Be creative but factual based on what's in the responses.
 
             <responses>
             {responseList}
@@ -299,7 +357,11 @@ class RAGWorkflow(Workflow):
 
 
 async def main():
-    w = RAGWorkflow(timeout=600, verbose=False)
+    import shutil
+    if os.path.exists(PERSIST_DIR):
+        shutil.rmtree(PERSIST_DIR)
+
+    w = RAGWorkflow(timeout=600, verbose=True)
     handler = w.run(
         resume_file="C:/Users/user/Desktop/fake_resume.pdf",
         application_form="C:/Users/user/Desktop/application_form.pdf"
@@ -320,9 +382,9 @@ async def main():
     print("Agent complete! Here's your final result:")
     print(str(response))
 
-    os.makedirs("workflows", exist_ok=True)
-    WORKFLOW_FILE = "workflows/form_filling_with_feedback_impl.html"
-    draw_all_possible_flows(w, filename=WORKFLOW_FILE)
+    # os.makedirs("workflows", exist_ok=True)
+    # WORKFLOW_FILE = "workflows/form_filling_with_feedback_impl.html"
+    # draw_all_possible_flows(w, filename=WORKFLOW_FILE)
 
 
 if __name__ == "__main__":
