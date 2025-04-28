@@ -6,6 +6,7 @@ langchain-core~=0.3.45
 langgraph>=0.2.27
 langchain-community>=0.3.21
 langchain-mistralai>=0.2.10
+langgraph
 llama-index
 llama-index-embeddings-mistralai
 llama-index-llms-mistralai
@@ -20,4 +21,6 @@ llama-index-readers-whisper
 gradio
 requests
 ffmpeg-python
+beautifulsoup4
+typing-extensions
 # ~= means install this version or newer within the same major/minor (e.g. ~=1.5.0 allows 1.5.1, 1.5.9 but not 1.6.0)
