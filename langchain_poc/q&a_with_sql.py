@@ -6,6 +6,8 @@ from langchain import hub
 from langchain.chat_models import init_chat_model
 from typing_extensions import Annotated
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph import graph as langgraph
 
 
 class State(TypedDict):
@@ -79,30 +81,44 @@ if __name__ == "__main__":
 
     query_prompt_template = hub.pull("langchain-ai/sql-query-system-prompt")
 
-    print("\nPrompt Template:")
-    assert len(query_prompt_template.messages) == 2
-    for message in query_prompt_template.messages:
-        message.pretty_print()
+    # Define the graph
+    builder = langgraph.StateGraph(State)
 
-    question = "How many Employees are there?"
-    print(f"\nQuestion: {question}")
+    # Add nodes
+    builder.add_node("write_query", write_query)
+    builder.add_node("execute_query", execute_query)
+    builder.add_node("generate_answer", generate_answer)
 
-    state = {"question": question, "query": "", "result": "", "answer": ""}
-    query_result = write_query(state)
+    # Add edges
+    builder.add_edge("write_query", "execute_query")
+    builder.add_edge("execute_query", "generate_answer")
 
-    state["query"] = query_result["query"]
-    print(f"Generated query: {state['query']}")
+    # Set the entry point
+    builder.set_entry_point("write_query")
 
-    query_execution = execute_query(state)
-    state["result"] = query_execution["result"]
-    print(f"Query result: {state['result']}")
+    # Setup memory and checkpoint
+    memory = MemorySaver()
+    graph = builder.compile(checkpointer=memory, interrupt_before=["execute_query"])
 
-    answer_result = generate_answer(state)
-    state["answer"] = answer_result["answer"]
-    print(f"\nQuestion: {state['question']}")
-    print(f"Answer: {state['answer']}")
+    # Configuration with thread_id for persistence
+    config = {"configurable": {"thread_id": "1"}}
 
-    test_query = "SELECT COUNT(EmployeeId) AS EmployeeCount FROM Employee;"
-    test_result = execute_query({"query": test_query})
-    print(f"\nTest query: {test_query}")
-    print(f"Test result: {test_result['result']}")
+    # Stream the graph with interruption before execute_query
+    for step in graph.stream(
+            {"question": "How many employees are there?"},
+            config,
+            stream_mode="updates",
+    ):
+        print(step)
+
+    try:
+        user_approval = input("Do you want to go to execute query? (yes/no): ")
+    except Exception:
+        user_approval = "no"
+
+    if user_approval.lower() == "yes":
+        # If approved, continue the graph execution
+        for step in graph.stream(None, config, stream_mode="updates"):
+            print(step)
+    else:
+        print("Operation cancelled by user.")
