@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from langchain import hub
 from langchain.chat_models import init_chat_model
 from typing_extensions import Annotated
+from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
+
 
 class State(TypedDict):
     question: str
@@ -12,9 +14,11 @@ class State(TypedDict):
     result: str
     answer: str
 
+
 class QueryOutput(TypedDict):
     """Generated SQL query."""
     query: Annotated[str, ..., "Syntactically valid SQL query."]
+
 
 def write_query(state: State):
     """Generate SQL query to fetch information."""
@@ -30,13 +34,34 @@ def write_query(state: State):
     result = structured_llm.invoke(prompt)
     return {"query": result["query"]}
 
-def execute_query(query):
-    """Execute the SQL query and return results."""
+
+def generate_answer(state: State):
+    """Answer question using retrieved information as context."""
+    prompt = (
+        "Given the following user question, corresponding SQL query, "
+        "and SQL result, answer the user question.\n\n"
+        f'Question: {state["question"]}\n'
+        f'SQL Query: {state["query"]}\n'
+        f'SQL Result: {state["result"]}'
+    )
+    response = llm.invoke(prompt)
+    return {"answer": response.content}
+
+
+def execute_query(state: State):
+    """Execute SQL query."""
+    execute_query_tool = QuerySQLDatabaseTool(db=db)
+    return {"result": execute_query_tool.invoke(state["query"])}
+
+
+def execute_query_direct(query):
+    """Execute the SQL query and return results directly."""
     try:
         result = db.run(query)
         return result
     except Exception as e:
         return f"Error executing query: {str(e)}"
+
 
 if __name__ == "__main__":
     load_dotenv()
@@ -68,5 +93,16 @@ if __name__ == "__main__":
     state["query"] = query_result["query"]
     print(f"Generated query: {state['query']}")
 
-    state["result"] = execute_query(state["query"])
+    query_execution = execute_query(state)
+    state["result"] = query_execution["result"]
     print(f"Query result: {state['result']}")
+
+    answer_result = generate_answer(state)
+    state["answer"] = answer_result["answer"]
+    print(f"\nQuestion: {state['question']}")
+    print(f"Answer: {state['answer']}")
+
+    test_query = "SELECT COUNT(EmployeeId) AS EmployeeCount FROM Employee;"
+    test_result = execute_query({"query": test_query})
+    print(f"\nTest query: {test_query}")
+    print(f"Test result: {test_result['result']}")
