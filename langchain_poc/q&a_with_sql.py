@@ -81,29 +81,22 @@ if __name__ == "__main__":
 
     query_prompt_template = hub.pull("langchain-ai/sql-query-system-prompt")
 
-    # Define the graph
     builder = langgraph.StateGraph(State)
 
-    # Add nodes
     builder.add_node("write_query", write_query)
     builder.add_node("execute_query", execute_query)
     builder.add_node("generate_answer", generate_answer)
 
-    # Add edges
     builder.add_edge("write_query", "execute_query")
     builder.add_edge("execute_query", "generate_answer")
 
-    # Set the entry point
     builder.set_entry_point("write_query")
 
-    # Setup memory and checkpoint
     memory = MemorySaver()
     graph = builder.compile(checkpointer=memory, interrupt_before=["execute_query"])
 
-    # Configuration with thread_id for persistence
     config = {"configurable": {"thread_id": "1"}}
 
-    # Stream the graph with interruption before execute_query
     for step in graph.stream(
             {"question": "How many employees are there?"},
             config,
@@ -117,7 +110,6 @@ if __name__ == "__main__":
         user_approval = "no"
 
     if user_approval.lower() == "yes":
-        # If approved, continue the graph execution
         for step in graph.stream(None, config, stream_mode="updates"):
             print(step)
     else:
