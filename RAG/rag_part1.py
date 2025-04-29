@@ -1,4 +1,3 @@
-import getpass
 import os
 import bs4
 from typing import List
@@ -74,3 +73,9 @@ if __name__ == "__main__":
 
     result = graph.invoke({"question": "What is Task Decomposition?"})
     print(f'Answer: {result["answer"]}')
+
+
+    # web_paths=(
+    #     "https://www.hiretalentt.com/blogs/what-are-agentic-document-workflows-the-next-frontier-in-ai-powered-data-processing-4509",
+    # )
+    # result = graph.invoke({"question": "give me an Introduction to ADWs"})
