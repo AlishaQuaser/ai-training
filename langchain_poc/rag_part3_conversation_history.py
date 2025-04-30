@@ -14,6 +14,9 @@ from langchain_core.documents import Document
 from langgraph.graph import START, END, StateGraph
 from langgraph.graph import MessagesState
 from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_core.messages import HumanMessage
+from langgraph.prebuilt import create_react_agent
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
 conversation_history = []
 
@@ -125,7 +128,10 @@ if __name__ == "__main__":
 
     graph = graph_builder.compile()
 
-    from langchain_core.messages import HumanMessage
+
+    memory = {}
+
+    agent_executor = create_react_agent(llm, [retrieve], checkpointer=memory)
 
     result = graph.invoke({"messages": [HumanMessage("What is Task Decomposition?")]})
     print("Question: What is Task Decomposition?")
@@ -136,3 +142,15 @@ if __name__ == "__main__":
     result = graph.invoke({"messages": follow_up_messages})
     print("\nQuestion: What are common ways of doing it?")
     print(f"Answer: {result['messages'][-1].content}")
+
+    config = {"configurable": {"thread_id": "def234"}}
+    input_message = (
+        "What is the standard method for Task Decomposition?\n\n"
+        "Once you get the answer, look up common extensions of that method."
+    )
+    for event in agent_executor.stream(
+            {"messages": [{"role": "user", "content": input_message}]},
+            stream_mode="values",
+            config=config,
+    ):
+        event["messages"][-1].pretty_print()
