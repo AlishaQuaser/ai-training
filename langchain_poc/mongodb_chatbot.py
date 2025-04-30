@@ -35,7 +35,6 @@ def get_collection_info():
 
     for collection_name in collection_names:
         collection = db[collection_name]
-        # Get a sample document to understand the schema
         sample_doc = collection.find_one()
         if sample_doc:
             collection_info[collection_name] = list(sample_doc.keys())
@@ -80,11 +79,8 @@ def execute_query(state: State):
     client = get_mongo_client()
     db = client["app-dev"]
 
-    # This is not secure but follows the pattern of the original code
-    # In production, you'd want proper query validation and sanitization
     result = eval(state["query"])
 
-    # Convert cursor to list if needed
     if hasattr(result, 'to_list'):
         result = list(result)
 
@@ -117,12 +113,9 @@ def chat_session():
             client = get_mongo_client()
             db = client["app-dev"]
 
-            # Execute the query
             query_code = initial_result['query']
-            # This is not secure but follows the pattern of the original code
             query_result = eval(query_code)
 
-            # Convert cursor to list if needed
             if hasattr(query_result, 'to_list'):
                 query_result = list(query_result)
 
