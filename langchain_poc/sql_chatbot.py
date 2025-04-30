@@ -6,9 +6,7 @@ from langchain import hub
 from langchain.chat_models import init_chat_model
 from typing_extensions import Annotated
 from langchain_community.tools.sql_database.tool import QuerySQLDatabaseTool
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph import graph as langgraph
-from langchain_core.messages import HumanMessage, AIMessage
 
 
 class State(TypedDict):
