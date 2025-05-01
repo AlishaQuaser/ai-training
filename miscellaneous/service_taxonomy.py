@@ -30,7 +30,6 @@ def get_categories_collection_info():
     client = get_mongo_client()
     db = client["app-dev"]
 
-    # Focus only on the categories collection
     collection = db["categories"]
     sample_doc = collection.find_one()
 
@@ -148,7 +147,6 @@ if __name__ == "__main__":
     db = client["app-dev"]
     print(f"Connected to MongoDB database: app-dev")
     print(f"Using collection: categories")
-    # Display sample document structure
     sample = db["categories"].find_one()
     if sample:
         print(f"Sample category fields: {list(sample.keys())}")
