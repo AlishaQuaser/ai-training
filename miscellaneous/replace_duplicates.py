@@ -15,11 +15,9 @@ def generate_object_id():
     - 2 bytes: process identifier
     - 3 bytes: counter
     """
-    # Generate timestamp portion (4 bytes)
     timestamp = int(datetime.datetime.now().timestamp())
     timestamp_hex = format(timestamp, '08x')
 
-    # Generate random parts for the remaining 8 bytes
     remaining_hex = binascii.b2a_hex(os.urandom(8)).decode('ascii')
 
     return timestamp_hex + remaining_hex

@@ -172,25 +172,20 @@ def generate_new_categories(state: State):
 
     print(f"\nGenerating categories for the following domains: {', '.join(domain_topics)}")
 
-    # Determine the number of parent categories (random between 70-80)
     num_parent_categories = random.randint(70, 80)
     print(f"Will generate {num_parent_categories} parent categories")
 
-    # Calculate how many subcategories we need for approximately 5000 total
     total_desired = 5000
     num_subcategories_needed = total_desired - num_parent_categories
 
-    # Distribute parent categories across domains
     domains_count = len(domain_topics)
     parents_per_domain = {}
     remaining_parents = num_parent_categories
 
-    # Distribute parent categories evenly across domains with some randomness
     for i, domain in enumerate(domain_topics):
-        if i == domains_count - 1:  # Last domain gets all remaining parents
+        if i == domains_count - 1:
             parents_per_domain[domain] = remaining_parents
         else:
-            # Allocate parents with some randomness
             domain_parents = max(1, int(num_parent_categories / domains_count) +
                                  random.randint(-2, 2))
             domain_parents = min(domain_parents, remaining_parents - (domains_count - i - 1))
@@ -199,15 +194,13 @@ def generate_new_categories(state: State):
 
     print(f"Parent categories distribution across domains: {parents_per_domain}")
 
-    # Generate parent categories by domain
     parent_categories = []
     for domain, domain_parent_count in parents_per_domain.items():
         print(f"\nGenerating {domain_parent_count} parent categories for domain: {domain}")
 
-        # Generate parent categories in batches of 10 to avoid token limits
         for batch in range(0, domain_parent_count, 10):
             batch_size = min(10, domain_parent_count - batch)
-            overall_display_order = len(parent_categories) + 1  # For global ordering
+            overall_display_order = len(parent_categories) + 1
 
             parent_categories_prompt = f"""
             Create {batch_size} unique parent categories for a hiring platform in the '{domain}' domain following this exact structure:
@@ -283,41 +276,32 @@ def generate_new_categories(state: State):
                 })
 
             for category in batch_parent_categories:
-                # Ensure domain field is present
                 if "domain" not in category:
                     category["domain"] = domain
 
             parent_categories.extend(batch_parent_categories)
             print(f"Generated batch of {len(batch_parent_categories)} parent categories for {domain}. Total parents so far: {len(parent_categories)}")
 
-    # Calculate average number of subcategories per parent
     avg_subcats_per_parent = num_subcategories_needed / num_parent_categories
 
-    # Distribute subcategories among parents with significant variation
-    # Since we're creating so many subcategories, we can have more variance
     subcats_distribution = []
     remaining = num_subcategories_needed
 
-    # Create a hierarchy - some parents will have many subcategories and some of those will have sub-subcategories
-    # This better matches the example JSON structure
-    for i in range(num_parent_categories - 1):  # Distribute for all except the last parent
+    for i in range(num_parent_categories - 1):
         if remaining <= 0:
             subcats_distribution.append(0)
         else:
-            # Hiring platforms often have varied category depths with some having deep hierarchies
-            # Use a longer-tailed distribution where some categories have many more subcategories
-            if random.random() < 0.15:  # 15% chance of being a "major" category with many subcategories
+            if random.random() < 0.15:
                 subcats = int(max(30, avg_subcats_per_parent * 2 + random.uniform(-20, 40)))
-            elif random.random() < 0.3:  # 30% chance of being a "medium" category
+            elif random.random() < 0.3:
                 subcats = int(max(15, avg_subcats_per_parent + random.uniform(-10, 20)))
-            else:  # 55% chance of being a "minor" category with fewer subcategories
+            else:
                 subcats = int(max(5, avg_subcats_per_parent * 0.5 + random.uniform(-5, 10)))
 
             subcats = min(subcats, remaining)
             subcats_distribution.append(subcats)
             remaining -= subcats
 
-    # Assign remaining subcategories to the last parent
     subcats_distribution.append(max(0, remaining))
 
     print(f"Distributing {sum(subcats_distribution)} subcategories across {num_parent_categories} parent categories")
@@ -332,8 +316,6 @@ def generate_new_categories(state: State):
 
         parent_name = parent_categories[parent_idx]["name"]
 
-        # Generate subcategories in batches of 25 to avoid token limits
-        # Using larger batches since we have so many more subcategories to generate
         for sub_batch in range(0, num_subcats, 25):
             sub_batch_size = min(25, num_subcats - sub_batch)
 
@@ -408,15 +390,12 @@ def generate_new_categories(state: State):
                     "logo": None
                 })
 
-            # For approximately 15% of subcategory batches, create sub-subcategories (third level)
             create_third_level = random.random() < 0.15 and len(batch_subcats) > 0
 
             if create_third_level:
-                # Select a random subcategory from this batch to have sub-subcategories
                 sub_subcat_parent_idx = random.randint(0, len(batch_subcats) - 1)
                 sub_subcat_parent = batch_subcats[sub_subcat_parent_idx]
 
-                # Determine number of sub-subcategories (3-8)
                 num_sub_subcats = random.randint(3, 8)
 
                 sub_subcat_prompt = f"""
@@ -496,16 +475,13 @@ def generate_new_categories(state: State):
             subcategories.extend(batch_subcats)
             print(f"Generated {len(batch_subcats)} subcategories for parent #{parent_idx+1}. Total subcategories so far: {len(subcategories)}")
 
-            # Add a progress indicator since this will take a while with 5000 categories
             if len(subcategories) % 500 == 0:
                 print(f"===== Milestone: Generated {len(subcategories)} subcategories ({len(subcategories) + len(parent_categories)} total categories) =====")
 
-            # If we've already reached our total goal, we can break early
             if len(subcategories) + len(parent_categories) >= total_desired:
                 print(f"Reached target of {total_desired} total categories early. Breaking generation loop.")
                 break
 
-        # If we've already reached our total goal, we can break early
         if len(subcategories) + len(parent_categories) >= total_desired:
             break
 
@@ -517,7 +493,6 @@ def generate_new_categories(state: State):
                                            "description", "marketable", "displayOrder", "logo"]):
             validated_categories.append(category)
 
-    # Calculate some statistics about the distribution
     if subcategories:
         subcats_per_parent = {}
         for subcat in subcategories:
@@ -537,29 +512,22 @@ def generate_new_categories(state: State):
         print(f"- Minimum subcategories for a parent: {min_subcats}")
         print(f"- Number of parents with subcategories: {len(subcats_per_parent)} out of {len(parent_categories)}")
 
-    # Create nested structure like the example JSON
     def create_nested_structure(categories):
-        # Create a dictionary to store the nested structure
         nested_structure = {}
 
-        # First pass: identify all parent categories
         for category in categories:
             if category["parentCategoryId"] is None:
                 nested_structure[category["name"]] = {}
 
-        # Second pass: add subcategories to their parents
         for category in categories:
             if category["parentCategoryId"] is not None:
-                # Find the parent category
                 parent = next((c for c in categories if c["_id"] == category["parentCategoryId"]), None)
                 if parent:
                     if parent["parentCategoryId"] is None:
-                        # This is a second-level subcategory
                         if nested_structure.get(parent["name"]) is None:
                             nested_structure[parent["name"]] = {}
                         nested_structure[parent["name"]][category["name"]] = {}
                     else:
-                        # This is a third-level subcategory
                         grandparent = next((c for c in categories if c["_id"] == parent["parentCategoryId"]), None)
                         if grandparent and grandparent["parentCategoryId"] is None:
                             if nested_structure.get(grandparent["name"]) is None:
@@ -570,25 +538,23 @@ def generate_new_categories(state: State):
 
         return nested_structure
 
-    # Create the nested structure similar to example JSON
     nested_categories = create_nested_structure(validated_categories)
 
     print(f"\nGenerated hierarchical category structure with {len(nested_categories)} top-level categories")
 
-    # Dump a preview of the nested structure (top 5 categories with their immediate children)
     preview_structure = {}
     for i, (category, subcats) in enumerate(nested_categories.items()):
-        if i >= 5:  # Only show 5 top categories in preview
+        if i >= 5:
             break
         preview_structure[category] = {}
         for j, (subcategory, subsubcats) in enumerate(subcats.items()):
-            if j >= 3:  # Only show 3 subcategories per parent in preview
+            if j >= 3:
                 preview_structure[category][subcategory + " ... and more"] = {}
                 break
             preview_structure[category][subcategory] = {}
             if subsubcats:
                 for k, subsubcat in enumerate(subsubcats.keys()):
-                    if k >= 2:  # Only show 2 sub-subcategories per subcategory in preview
+                    if k >= 2:
                         preview_structure[category][subcategory][subsubcat + " ... and more"] = {}
                         break
                     preview_structure[category][subcategory][subsubcat] = {}
@@ -596,7 +562,6 @@ def generate_new_categories(state: State):
     print("\nPreview of hierarchical structure (truncated):")
     print(json.dumps(preview_structure, indent=2))
 
-    # Return both flat and nested formats
     return {
         "generated_categories": validated_categories,
         "domain_topics": domain_topics,

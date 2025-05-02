@@ -7,7 +7,6 @@ import time
 from typing import Dict, List, Union, Any
 from dotenv import load_dotenv
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -31,15 +30,13 @@ class CategoryParser:
         self.output_file = output_file
         self.model = model
 
-        # Get API key from environment if not provided
         self.api_key = api_key or os.environ.get("MISTRAL_API_KEY")
         if not self.api_key:
             logger.warning("No API key provided. Please set MISTRAL_API_KEY environment variable or provide it as an argument.")
 
-        # Default timeout and retry settings
-        self.timeout = 60  # Increased timeout to 60 seconds
+        self.timeout = 60
         self.max_retries = 3
-        self.retry_delay = 5  # seconds
+        self.retry_delay = 5
 
     def read_file(self, file_path: str) -> str:
         """
@@ -71,13 +68,11 @@ class CategoryParser:
         Returns:
             List[str]: List of text chunks
         """
-        # Simple splitting based on paragraphs or lines
         paragraphs = text.split('\n\n')
         chunks = []
         current_chunk = ""
 
         for paragraph in paragraphs:
-            # If adding this paragraph would exceed max size, start a new chunk
             if len(current_chunk) + len(paragraph) > max_chunk_size and current_chunk:
                 chunks.append(current_chunk)
                 current_chunk = paragraph
@@ -87,7 +82,6 @@ class CategoryParser:
                 else:
                     current_chunk = paragraph
 
-        # Add the last chunk if it has content
         if current_chunk:
             chunks.append(current_chunk)
 
@@ -106,12 +100,10 @@ class CategoryParser:
         """
         logger.info("Parsing categories with Mistral AI")
 
-        # Check if text is too large - if so, chunk it
         if len(text) > 4000:
             logger.info(f"Text is large ({len(text)} chars), splitting into chunks for processing")
             return self.process_large_text(text)
 
-        # Construct the prompt for the LLM
         prompt = f"""
         I need you to parse the following text into a hierarchical category structure.
         The text contains categories and subcategories but they don't have explicit hierarchical markers.
@@ -147,7 +139,6 @@ class CategoryParser:
         Return only the valid JSON structure without any additional text or explanation.
         """
 
-        # Call the Mistral AI API with retries
         return self._call_mistral_api_with_retry(prompt)
 
     def process_large_text(self, text: str) -> Dict:
@@ -192,13 +183,10 @@ class CategoryParser:
             Return only the valid JSON structure without any additional text or explanation.
             """
 
-            # Process this chunk with retries
             chunk_result = self._call_mistral_api_with_retry(chunk_prompt)
 
-            # Merge with existing results
             all_results = self._merge_results(all_results, chunk_result)
 
-            # Add a small delay between API calls to avoid rate limits
             time.sleep(1)
 
         return all_results
@@ -218,13 +206,10 @@ class CategoryParser:
 
         for key, value in dict2.items():
             if key in result:
-                # If both values are lists, combine them
                 if isinstance(result[key], list) and isinstance(value, list):
-                    # Add items from value that aren't already in result[key]
                     for item in value:
                         if item not in result[key]:
                             result[key].append(item)
-                # If one is a dict and one is a list, convert the list to dict items
                 elif isinstance(result[key], dict) and isinstance(value, list):
                     for item in value:
                         if isinstance(item, dict):
@@ -235,11 +220,9 @@ class CategoryParser:
                     new_dict = {k: v for item in result[key] for k, v in (item.items() if isinstance(item, dict) else {item: []})}
                     new_dict.update(value)
                     result[key] = new_dict
-                # If both are dicts, merge them recursively
                 elif isinstance(result[key], dict) and isinstance(value, dict):
                     result[key] = self._merge_results(result[key], value)
             else:
-                # Key doesn't exist in result, so add it
                 result[key] = value
 
         return result
@@ -259,7 +242,6 @@ class CategoryParser:
             try:
                 response = self._call_mistral_api(prompt)
 
-                # Parse the JSON response
                 try:
                     return json.loads(response)
                 except json.JSONDecodeError:
@@ -277,13 +259,10 @@ class CategoryParser:
                     logger.error(f"Maximum retries ({self.max_retries}) exceeded")
                     raise
 
-                # Wait before retrying
                 logger.info(f"Waiting {self.retry_delay} seconds before retry...")
                 time.sleep(self.retry_delay)
-                # Increase delay for next retry (exponential backoff)
                 self.retry_delay *= 2
 
-        # This should not be reached due to the raise in the loop
         raise RuntimeError("Failed to get response after retries")
 
     def _call_mistral_api(self, prompt: str) -> str:
@@ -311,8 +290,8 @@ class CategoryParser:
                 {"role": "system", "content": "You are a helpful assistant that parses category hierarchies into JSON structure."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.1,  # Low temperature for more deterministic output
-            "response_format": {"type": "json_object"}  # Ensure JSON response
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"}
         }
 
         try:
@@ -320,7 +299,7 @@ class CategoryParser:
                 "https://api.mistral.ai/v1/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=self.timeout  # Use the configurable timeout
+                timeout=self.timeout
             )
 
             if response.status_code == 200:
@@ -346,7 +325,6 @@ class CategoryParser:
             str: Extracted JSON string or empty string if not found
         """
         import re
-        # Look for text that appears to be JSON (between curly braces)
         matches = re.search(r'({[\s\S]*})', text)
         if matches:
             return matches.group(1)
@@ -386,10 +364,8 @@ class CategoryParser:
         return "\n".join(lines)
 
 def main():
-    # Load environment variables
     load_dotenv()
 
-    # Set up argument parser
     parser = argparse.ArgumentParser(description='Parse category text using Mistral AI and generate hierarchical JSON')
     parser.add_argument('--input', '-i', help='Path to the input text file (if not provided, will prompt for text input)')
     parser.add_argument('--output', '-o', default='categories.json', help='Path for the output JSON file')
@@ -400,21 +376,17 @@ def main():
     parser.add_argument('--chunk-size', '-c', type=int, default=4000, help='Maximum characters per chunk when processing large texts')
     args = parser.parse_args()
 
-    # Get API key from args or environment
     api_key = os.getenv("MISTRAL_API_KEY")
     if api_key is None:
         logger.error("You need to set your MISTRAL_API_KEY environment variable or provide it with --api-key")
         return 1
 
     try:
-        # Initialize parser
         parser = CategoryParser(api_key=api_key, output_file=args.output, model=args.model)
 
-        # Configure parser settings
         parser.timeout = args.timeout
         parser.max_retries = args.retries
 
-        # Get the input text - either from file or user input
         if args.input:
             text_content = parser.read_file(args.input)
         else:
@@ -424,10 +396,8 @@ def main():
             logger.error("No input text provided")
             return 1
 
-        # Parse the categories using Mistral AI
         categories = parser.parse_with_llm(text_content)
 
-        # Save the result
         parser.save_to_json(categories)
 
         logger.info("Category parsing completed successfully")
@@ -438,5 +408,7 @@ def main():
 
     return 0
 
+
 if __name__ == "__main__":
     exit(main())
+
