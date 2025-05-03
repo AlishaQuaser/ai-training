@@ -36,7 +36,7 @@ def create_slug(name):
     """Convert a name to a slug format."""
     return name.lower().replace(" ", "-").replace("&", "and").replace("/", "-").replace(".", "").replace(",", "")
 
-def process_categories_from_file(file_path, max_categories=1868):
+def process_categories_from_file(file_path, max_categories=2):
     """
     Process categories from a text file and create structured category objects.
     Skip categories that already exist in the database.
@@ -223,7 +223,7 @@ def main():
     """Main function to process categories from file and save unique ones."""
     load_dotenv()
 
-    max_categories = 1868
+    max_categories = 2
 
     try:
         file_path = input("Enter path to the text file containing categories: ")
