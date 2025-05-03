@@ -31,7 +31,8 @@ def clean_json_documents(json_file_path, output_file_path=None):
                 continue
 
             cleaned_doc = {key: value for key, value in doc.items()
-                           if key != '_id' and key != 'domain'}
+                           # if key != '_id' and key != 'domain'
+                           if key != 'domain'}
 
             modified_data.append(cleaned_doc)
             processed_count += 1
@@ -75,7 +76,7 @@ def main():
 
     if processed_count > 0:
         print(f"\nTotal documents processed: {processed_count}")
-        print(f"Successfully removed '_id' and 'domain' fields from all documents.")
+        print(f"Successfully removed 'domain' fields from all documents.")
 
 if __name__ == "__main__":
     main()
