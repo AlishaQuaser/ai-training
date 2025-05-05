@@ -17,6 +17,7 @@ def generate_object_id():
     """
     timestamp = int(datetime.datetime.now().timestamp())
     timestamp_hex = format(timestamp, '08x')
+    timestamp_hex = format(timestamp, '08x')
 
     remaining_hex = binascii.b2a_hex(os.urandom(8)).decode('ascii')
 
