@@ -82,37 +82,28 @@ def extract_agency_basic_info(agency, agency_type, profiles):
 
         approval_status = " This agency is approved by HireTalentt."
 
-    # Basic info starts with name and type
     if agency_type == "freelancer" and profiles:
-        # Get name from the first profile if available
         name = profiles[0].get('firstName', 'Unnamed Professional')
     basic_info = f"{name} is a {agency_type}"
 
 
-    # Add description if available
     if description:
         basic_info += f". {description}"
 
-    # Add tagline if available
     if tagline:
         basic_info += f" {tagline}"
 
-    # Add services
     basic_info += services_text
 
-    # Add location if available
     if location_text != "Location not specified":
         basic_info += f" Based in {location_text}."
 
-    # Add website if available
     if website:
         basic_info += f" Website: {website}."
 
-    # Add rate if available
     if rate_str != "Rate not specified":
         basic_info += f" Typical hourly rate: {rate_str}."
 
-    # Add approval status
     basic_info += approval_status
 
     return basic_info.strip()
@@ -121,17 +112,14 @@ def extract_profiles_for_agency(db, agency_id):
     """Extract all profiles related to a specific agency using a more robust approach."""
     profiles_collection = db["profiles"]
 
-    # Convert agency_id to string for string comparison
     agency_id_str = str(agency_id)
 
-    # Use a manual filtering approach instead of direct query
     all_profiles = list(profiles_collection.find())
     matching_profiles = []
 
     for profile in all_profiles:
         business_id = profile.get('businessId')
         if business_id:
-            # Convert to string for comparison
             business_id_str = str(business_id)
             if business_id_str == agency_id_str:
                 matching_profiles.append(profile)
@@ -213,13 +201,6 @@ def collect_education_and_certifications(profiles):
     certification_data = []
     experience_data = []
 
-    # name_exclusions = [
-    #     "Uzair Uddin", "John", "Smith", "Johnson", "Williams", "Brown", "Jones", "Miller",
-    #     "Davis", "Garcia", "Rodriguez", "Wilson", "Martinez", "Anderson", "Taylor", "Thomas",
-    #     "Hernandez", "Moore", "Martin", "Jackson", "Thompson", "White", "Lopez", "Lee", "Gonzalez"
-    # ]
-    #
-    # name_exclusions_lower = {name.lower() for name in name_exclusions}
 
     for profile in profiles:
         education_entries = profile.get('education', [])
@@ -289,7 +270,6 @@ def collect_projects_information(case_studies):
 
         title = case_study.get('title', 'Untitled Project')
         client = case_study.get('client', '')
-        # duration = case_study.get('duration', '')
         project_type = case_study.get('type', '')
         overview = case_study.get('overview', '')
         feature_statement = case_study.get('featureStatement', '')
@@ -324,7 +304,6 @@ def generate_agency_text(agency, profiles, case_studies):
         return ""
     agency_type = get_agency_type(agency, profiles)
 
-    # Get basic info
     agency_info = extract_agency_basic_info(agency, agency_type, profiles)
 
     all_skills = collect_all_skills(profiles, case_studies)
@@ -333,25 +312,20 @@ def generate_agency_text(agency, profiles, case_studies):
 
     projects_by_industry, clients, features, project_types = collect_projects_information(case_studies)
 
-    # Check if we have any substantial data
     has_data = bool(all_skills or education_data or certification_data or
                     experience_data or projects_by_industry or clients or
                     features or project_types)
 
-    # If we have no data, just return the basic info
     if not has_data:
         return agency_info
 
-    # Build skills section
     skills_text = ""
     if all_skills:
-        # FIX: Change wording based on agency type to avoid redundancy
         if agency_type == 'freelancer':
             skills_text = f" has expertise in {', '.join(all_skills)}"
         else:
             skills_text = f" with expertise in {', '.join(all_skills)}"
 
-    # Build education section
     education_text = ""
     if education_data:
         if agency_type == 'freelancer':
@@ -359,12 +333,10 @@ def generate_agency_text(agency, profiles, case_studies):
         else:
             education_text = f" Team members have following educational backgrounds : {', '.join(education_data)}."
 
-    # Build certification section
     certification_text = ""
     if certification_data:
         certification_text = f" Certifications held include {', '.join(certification_data)}."
 
-    # Build experience section
     experience_text = ""
     if experience_data:
         if agency_type == 'freelancer':
@@ -374,12 +346,10 @@ def generate_agency_text(agency, profiles, case_studies):
         else:
             experience_text = f" The team has experience in {', '.join(experience_data)}."
 
-    # Build project types section
     project_types_text = ""
     if project_types:
         project_types_text = f" They specialize in {', '.join(project_types)} projects."
 
-    # Build industry section
     industry_text = ""
     if projects_by_industry:
         industry_parts = []
@@ -402,24 +372,20 @@ def generate_agency_text(agency, profiles, case_studies):
         if industry_parts:
             industry_text = f" They work across industries including {', '.join(industry_parts)}."
 
-    # Build clients section
     clients_text = ""
     if clients:
         clients_text = f" They have worked with clients such as {', '.join(clients)}."
 
-    # Build features section
     features_text = ""
     if features:
         features_text = f" Their projects feature {', '.join(features)}."
 
-    # Put it all together
-    # First add skills to the basic info
+
     if skills_text:
         agency_text = f"{agency_info}{skills_text}."
     else:
         agency_text = agency_info
 
-    # Now add additional sections only if they have content
     additional_sections = []
     if education_text.strip():
         additional_sections.append(education_text)
@@ -436,19 +402,15 @@ def generate_agency_text(agency, profiles, case_studies):
     if features_text.strip():
         additional_sections.append(features_text)
 
-    # Add the additional sections to the agency text
     if additional_sections:
         agency_text += " " + " ".join(additional_sections)
 
-    # Add profiles section with individual team members
     if len(profiles) > 1 or agency_type == 'business':
         agency_text += "\n\nTeam members include:\n\n"
 
         for profile in profiles:
-            # Get profile name
             name = profile.get('firstName', 'Unnamed Professional')
 
-            # Get profile-specific info
             profile_skills = []
             for skill in profile.get('highlightedSkills', []) + profile.get('additionalSkill', []):
                 if isinstance(skill, dict):
@@ -458,7 +420,6 @@ def generate_agency_text(agency, profiles, case_studies):
                 elif isinstance(skill, str):
                     profile_skills.append(skill)
 
-            # Process education and certifications
             education = []
             for edu in profile.get('education', []):
                 if isinstance(edu, dict):
@@ -480,7 +441,6 @@ def generate_agency_text(agency, profiles, case_studies):
                 if cert_name:
                     certifications.append(cert_name)
 
-            # Process experience and convert to third-person
             experience_text = ""
             career_summary = profile.get('carrierSummary', '')
             if career_summary:
@@ -503,7 +463,6 @@ def generate_agency_text(agency, profiles, case_studies):
                     if exp_text:
                         experience_text += exp_text + " "
 
-            # Build profile text
             profile_text = f"{name}: "
 
             if profile_skills:
@@ -518,10 +477,8 @@ def generate_agency_text(agency, profiles, case_studies):
             if experience_text:
                 profile_text += f"{experience_text}"
 
-            # Add profile to agency text
             agency_text += profile_text + "\n\n"
 
-    # Clean up any double spaces or double periods
     agency_text = agency_text.replace("  ", " ")
     agency_text = agency_text.replace("..", ".")
 
@@ -529,7 +486,6 @@ def generate_agency_text(agency, profiles, case_studies):
 
 def convert_to_third_person(text, name):
     """Convert first-person text to third-person using the given name."""
-    # Common first-person pronouns and their replacements
     replacements = {
         r'\bI\b': name,
         r'\bMy\b': f"{name}'s",
@@ -543,7 +499,6 @@ def convert_to_third_person(text, name):
         r'\bI\'ll\b': f"{name} will"
     }
 
-    # Apply all replacements
     for pattern, replacement in replacements.items():
         text = re.sub(pattern, replacement, text)
 
