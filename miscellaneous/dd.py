@@ -577,7 +577,6 @@ def generate_and_store_agency_texts():
             )
         )
 
-        print(f"Generated text for {agency.get('name', 'Unnamed')}: {agency_text[:100]}...")
 
         if len(operations) >= 50:
             result = agencies_collection.bulk_write(operations)
