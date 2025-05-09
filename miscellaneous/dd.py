@@ -25,7 +25,7 @@ def get_agency_type(agency, profiles):
         return 'business'
     return 'freelancer'
 
-def extract_agency_basic_info(agency, agency_type):
+def extract_agency_basic_info(agency, agency_type, profiles):
     """Extract basic information from agency document."""
     name = agency.get('name', 'Unnamed Agency')
     description = agency.get('description', '')
@@ -80,7 +80,11 @@ def extract_agency_basic_info(agency, agency_type):
         approval_status = " This agency is approved by HireTalentt."
 
     # Basic info starts with name and type
+    if agency_type == "freelancer" and profiles:
+        # Get name from the first profile if available
+        name = profiles[0].get('firstName', 'Unnamed Professional')
     basic_info = f"{name} is a {agency_type}"
+
 
     # Add description if available
     if description:
@@ -111,10 +115,25 @@ def extract_agency_basic_info(agency, agency_type):
     return basic_info.strip()
 
 def extract_profiles_for_agency(db, agency_id):
-    """Extract all profiles related to a specific agency."""
+    """Extract all profiles related to a specific agency using a more robust approach."""
     profiles_collection = db["profiles"]
-    profiles = list(profiles_collection.find({"businessId": agency_id}))
-    return profiles
+
+    # Convert agency_id to string for string comparison
+    agency_id_str = str(agency_id)
+
+    # Use a manual filtering approach instead of direct query
+    all_profiles = list(profiles_collection.find())
+    matching_profiles = []
+
+    for profile in all_profiles:
+        business_id = profile.get('businessId')
+        if business_id:
+            # Convert to string for comparison
+            business_id_str = str(business_id)
+            if business_id_str == agency_id_str:
+                matching_profiles.append(profile)
+
+    return matching_profiles
 
 def extract_case_studies_for_agency(db, agency_id):
     """Extract all case studies related to a specific agency, handling both ObjectId and string IDs."""
@@ -290,7 +309,6 @@ def collect_projects_information(case_studies):
             'title': title,
             'technologies': tech_stack,
             'client': client,
-            # 'duration': duration,
             'type': project_type,
             'overview': overview,
             'feature_statement': feature_statement
@@ -300,10 +318,12 @@ def collect_projects_information(case_studies):
 
 def generate_agency_text(agency, profiles, case_studies):
     """Generate comprehensive representative text for an agency with individual profiles."""
+    if not profiles:
+        return ""
     agency_type = get_agency_type(agency, profiles)
 
     # Get basic info
-    agency_info = extract_agency_basic_info(agency, agency_type)
+    agency_info = extract_agency_basic_info(agency, agency_type, profiles)
 
     all_skills = collect_all_skills(profiles, case_studies)
 
@@ -347,6 +367,8 @@ def generate_agency_text(agency, profiles, case_studies):
     if experience_data:
         if agency_type == 'freelancer':
             experience_text = f" They have experience in {', '.join(experience_data)}."
+            name = profiles[0].get('firstName', 'Unnamed Professional')
+            experience_text=convert_to_third_person(experience_text,name)
         else:
             experience_text = f" The team has experience in {', '.join(experience_data)}."
 
@@ -527,8 +549,9 @@ def convert_to_third_person(text, name):
 
 def generate_and_store_agency_texts():
     """Generate representative texts for all agencies and store them in MongoDB."""
+    agencies_with_text = 0
     db = connect_to_mongodb()
-    agencies_collection = db["agencies2"]
+    agencies_collection = db["agencies"]
 
     agencies = list(agencies_collection.find())
     print(f"Found {len(agencies)} agencies")
@@ -539,13 +562,14 @@ def generate_and_store_agency_texts():
     for i, agency in enumerate(agencies):
         agency_id = agency.get('_id')
 
+
         profiles = extract_profiles_for_agency(db, agency_id)
         case_studies = extract_case_studies_for_agency(db, agency_id)
 
         print(f"Processing agency {i+1}/{len(agencies)}: {agency.get('name', 'Unnamed')} - {len(profiles)} profiles, {len(case_studies)} case studies)")
 
         agency_text = generate_agency_text(agency, profiles, case_studies)
-
+        agencies_with_text += 1
         operations.append(
             UpdateOne(
                 {"_id": agency_id},
@@ -559,6 +583,16 @@ def generate_and_store_agency_texts():
             result = agencies_collection.bulk_write(operations)
             print(f"Bulk updated {result.modified_count} agencies")
             operations = []
+
+        agency_count = agencies_collection.count_documents({})
+        profile_count = db["profiles"].count_documents({})
+        case_study_count = db["case_studies"].count_documents({})
+
+        # print("\n=== SUMMARY ===")
+        # print(f"Total Agencies: {agency_count}")
+        # print(f"Total Profiles: {profile_count}")
+        # print(f"Total Case Studies: {case_study_count}")
+        # print(f"Agencies with Generated Text: {agencies_with_text}")
 
     if operations:
         result = agencies_collection.bulk_write(operations)
