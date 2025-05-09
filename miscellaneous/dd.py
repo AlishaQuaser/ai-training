@@ -77,6 +77,9 @@ def extract_agency_basic_info(agency, agency_type, profiles):
 
     approval_status = ""
     if agency.get('approvedByHiretalentt') is True:
+        if agency_type == "freelancer" :
+            approval_status = " This freelancer is approved by HireTalentt."
+
         approval_status = " This agency is approved by HireTalentt."
 
     # Basic info starts with name and type
@@ -210,19 +213,19 @@ def collect_education_and_certifications(profiles):
     certification_data = []
     experience_data = []
 
-    name_exclusions = [
-        "Uzair Uddin", "John", "Smith", "Johnson", "Williams", "Brown", "Jones", "Miller",
-        "Davis", "Garcia", "Rodriguez", "Wilson", "Martinez", "Anderson", "Taylor", "Thomas",
-        "Hernandez", "Moore", "Martin", "Jackson", "Thompson", "White", "Lopez", "Lee", "Gonzalez"
-    ]
-
-    name_exclusions_lower = {name.lower() for name in name_exclusions}
+    # name_exclusions = [
+    #     "Uzair Uddin", "John", "Smith", "Johnson", "Williams", "Brown", "Jones", "Miller",
+    #     "Davis", "Garcia", "Rodriguez", "Wilson", "Martinez", "Anderson", "Taylor", "Thomas",
+    #     "Hernandez", "Moore", "Martin", "Jackson", "Thompson", "White", "Lopez", "Lee", "Gonzalez"
+    # ]
+    #
+    # name_exclusions_lower = {name.lower() for name in name_exclusions}
 
     for profile in profiles:
         education_entries = profile.get('education', [])
         for edu in education_entries:
             if isinstance(edu, dict):
-                institution = edu.get('institution', '')
+                institution = edu.get('institute', '')
                 degree = edu.get('degree', '')
                 if institution and degree:
                     education_data.append(f"{degree} from {institution}")
@@ -237,9 +240,8 @@ def collect_education_and_certifications(profiles):
             elif isinstance(cert, str):
                 cert_name = cert
 
-            if cert_name and cert_name.lower() not in name_exclusions_lower:
-                if not (len(cert_name.split()) >= 2 and cert_name.split()[0][0].isupper() and cert_name.split()[1][0].isupper()):
-                    certification_data.append(cert_name)
+            if cert_name:
+                certification_data.append(cert_name)
 
         career_summary = profile.get('carrierSummary', '')
         if career_summary:
@@ -355,7 +357,7 @@ def generate_agency_text(agency, profiles, case_studies):
         if agency_type == 'freelancer':
             education_text = f" They have educational background from {', '.join(education_data)}."
         else:
-            education_text = f" Team members have educational backgrounds from {', '.join(education_data)}."
+            education_text = f" Team members have following educational backgrounds : {', '.join(education_data)}."
 
     # Build certification section
     certification_text = ""
@@ -582,16 +584,6 @@ def generate_and_store_agency_texts():
             result = agencies_collection.bulk_write(operations)
             print(f"Bulk updated {result.modified_count} agencies")
             operations = []
-
-        agency_count = agencies_collection.count_documents({})
-        profile_count = db["profiles"].count_documents({})
-        case_study_count = db["case_studies"].count_documents({})
-
-        # print("\n=== SUMMARY ===")
-        # print(f"Total Agencies: {agency_count}")
-        # print(f"Total Profiles: {profile_count}")
-        # print(f"Total Case Studies: {case_study_count}")
-        # print(f"Agencies with Generated Text: {agencies_with_text}")
 
     if operations:
         result = agencies_collection.bulk_write(operations)
