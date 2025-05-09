@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from dotenv import load_dotenv
 from bson import ObjectId
+import re
 
 load_dotenv()
 
@@ -298,7 +299,7 @@ def collect_projects_information(case_studies):
     return projects_by_industry, list(clients), list(all_features), list(all_project_types)
 
 def generate_agency_text(agency, profiles, case_studies):
-    """Generate comprehensive representative text for an agency."""
+    """Generate comprehensive representative text for an agency with individual profiles."""
     agency_type = get_agency_type(agency, profiles)
 
     # Get basic info
@@ -388,7 +389,6 @@ def generate_agency_text(agency, profiles, case_studies):
         features_text = f" Their projects feature {', '.join(features)}."
 
     # Put it all together
-    # FIX: Check each section before adding it to avoid empty sections
     # First add skills to the basic info
     if skills_text:
         agency_text = f"{agency_info}{skills_text}."
@@ -416,11 +416,114 @@ def generate_agency_text(agency, profiles, case_studies):
     if additional_sections:
         agency_text += " " + " ".join(additional_sections)
 
+    # Add profiles section with individual team members
+    if len(profiles) > 1 or agency_type == 'business':
+        agency_text += "\n\nTeam members include:\n\n"
+
+        for profile in profiles:
+            # Get profile name
+            name = profile.get('firstName', 'Unnamed Professional')
+
+            # Get profile-specific info
+            profile_skills = []
+            for skill in profile.get('highlightedSkills', []) + profile.get('additionalSkill', []):
+                if isinstance(skill, dict):
+                    skill_name = skill.get('name', '')
+                    if skill_name:
+                        profile_skills.append(skill_name)
+                elif isinstance(skill, str):
+                    profile_skills.append(skill)
+
+            # Process education and certifications
+            education = []
+            for edu in profile.get('education', []):
+                if isinstance(edu, dict):
+                    institution = edu.get('institution', '')
+                    degree = edu.get('degree', '')
+                    if institution and degree:
+                        education.append(f"{degree} from {institution}")
+                    elif institution:
+                        education.append(institution)
+
+            certifications = []
+            for cert in profile.get('certifications', []):
+                cert_name = ""
+                if isinstance(cert, dict):
+                    cert_name = cert.get('name', '')
+                elif isinstance(cert, str):
+                    cert_name = cert
+
+                if cert_name:
+                    certifications.append(cert_name)
+
+            # Process experience and convert to third-person
+            experience_text = ""
+            career_summary = profile.get('carrierSummary', '')
+            if career_summary:
+                experience_text += convert_to_third_person(career_summary, name) + " "
+
+            experience_entries = profile.get('experience', [])
+            for exp in experience_entries:
+                if isinstance(exp, dict):
+                    position = exp.get('position', '')
+                    company = exp.get('company', '')
+                    description = exp.get('responsibilityDescription', '')
+
+                    exp_text = ""
+                    if position and company:
+                        exp_text += f"Worked as {position} at {company}. "
+
+                    if description:
+                        exp_text += convert_to_third_person(description, name)
+
+                    if exp_text:
+                        experience_text += exp_text + " "
+
+            # Build profile text
+            profile_text = f"{name}: "
+
+            if profile_skills:
+                profile_text += f"Has expertise in {', '.join(profile_skills)}. "
+
+            if education:
+                profile_text += f"Educated at {', '.join(education)}. "
+
+            if certifications:
+                profile_text += f"Holds certifications in {', '.join(certifications)}. "
+
+            if experience_text:
+                profile_text += f"{experience_text}"
+
+            # Add profile to agency text
+            agency_text += profile_text + "\n\n"
+
     # Clean up any double spaces or double periods
     agency_text = agency_text.replace("  ", " ")
     agency_text = agency_text.replace("..", ".")
 
     return agency_text.strip()
+
+def convert_to_third_person(text, name):
+    """Convert first-person text to third-person using the given name."""
+    # Common first-person pronouns and their replacements
+    replacements = {
+        r'\bI\b': name,
+        r'\bMy\b': f"{name}'s",
+        r'\bmy\b': f"{name}'s",
+        r'\bme\b': name,
+        r'\bmyself\b': f"{name}self",
+        r'\bmine\b': f"{name}'s",
+        r'\bI\'ve\b': f"{name} has",
+        r'\bI\'m\b': f"{name} is",
+        r'\bI\'d\b': f"{name} would",
+        r'\bI\'ll\b': f"{name} will"
+    }
+
+    # Apply all replacements
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text)
+
+    return text
 
 def generate_and_store_agency_texts():
     """Generate representative texts for all agencies and store them in MongoDB."""
@@ -431,6 +534,7 @@ def generate_and_store_agency_texts():
     print(f"Found {len(agencies)} agencies")
 
     operations = []
+
 
     for i, agency in enumerate(agencies):
         agency_id = agency.get('_id')
