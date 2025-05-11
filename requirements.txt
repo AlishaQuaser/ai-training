@@ -26,5 +26,6 @@ flask
 langchain_mongodb
 beautifulsoup4
 backoff
+numpy
 typing-extensions
 # ~= means install this version or newer within the same major/minor (e.g. ~=1.5.0 allows 1.5.1, 1.5.9 but not 1.6.0)

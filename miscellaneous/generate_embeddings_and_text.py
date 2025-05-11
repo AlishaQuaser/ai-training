@@ -1,12 +1,16 @@
-
 import os
 from pymongo import MongoClient, UpdateOne
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime
 from dotenv import load_dotenv
-from bson import ObjectId
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_mistralai import MistralAIEmbeddings
+import re
+import numpy as np
+
 
 load_dotenv()
+
 
 def connect_to_mongodb():
     """Connect to MongoDB using environment variables."""
@@ -19,13 +23,15 @@ def connect_to_mongodb():
     db = client["hiretalentt"]
     return db
 
+
 def get_agency_type(agency, profiles):
     """Determine if agency is a business or freelancer based on team size."""
     if len(profiles) > 1:
         return 'business'
     return 'freelancer'
 
-def extract_agency_basic_info(agency, agency_type):
+
+def extract_agency_basic_info(agency, agency_type, profiles):
     """Extract basic information from agency document."""
     name = agency.get('name', 'Unnamed Agency')
     description = agency.get('description', '')
@@ -77,12 +83,18 @@ def extract_agency_basic_info(agency, agency_type):
 
     approval_status = ""
     if agency.get('approvedByHiretalentt') is True:
+        if agency_type == "freelancer" :
+            approval_status = " This freelancer is approved by HireTalentt."
+
         approval_status = " This agency is approved by HireTalentt."
 
-    # Modified this part to fix the issue
+    if agency_type == "freelancer" and profiles:
+        name = profiles[0].get('firstName', 'Unnamed Professional')
     basic_info = f"{name} is a {agency_type}"
 
-    basic_info += f". {description}"
+
+    if description:
+        basic_info += f". {description}"
 
     if tagline:
         basic_info += f" {tagline}"
@@ -102,11 +114,25 @@ def extract_agency_basic_info(agency, agency_type):
 
     return basic_info.strip()
 
+
 def extract_profiles_for_agency(db, agency_id):
-    """Extract all profiles related to a specific agency."""
+    """Extract all profiles related to a specific agency using a more robust approach."""
     profiles_collection = db["profiles"]
-    profiles = list(profiles_collection.find({"businessId": agency_id}))
-    return profiles
+
+    agency_id_str = str(agency_id)
+
+    all_profiles = list(profiles_collection.find())
+    matching_profiles = []
+
+    for profile in all_profiles:
+        business_id = profile.get('businessId')
+        if business_id:
+            business_id_str = str(business_id)
+            if business_id_str == agency_id_str:
+                matching_profiles.append(profile)
+
+    return matching_profiles
+
 
 def extract_case_studies_for_agency(db, agency_id):
     """Extract all case studies related to a specific agency, handling both ObjectId and string IDs."""
@@ -117,6 +143,7 @@ def extract_case_studies_for_agency(db, agency_id):
     case_studies = list(case_studies_collection.find({"caseStudyBusinessId": agency_id_str}))
 
     return case_studies
+
 
 def collect_all_skills(profiles, case_studies):
     """Collect all unique skills from profiles and case studies."""
@@ -177,25 +204,19 @@ def collect_all_skills(profiles, case_studies):
 
     return list(unique_skills)
 
+
 def collect_education_and_certifications(profiles):
     """Collect education and certification information from profiles."""
     education_data = []
     certification_data = []
     experience_data = []
 
-    name_exclusions = [
-        "Uzair Uddin", "John", "Smith", "Johnson", "Williams", "Brown", "Jones", "Miller",
-        "Davis", "Garcia", "Rodriguez", "Wilson", "Martinez", "Anderson", "Taylor", "Thomas",
-        "Hernandez", "Moore", "Martin", "Jackson", "Thompson", "White", "Lopez", "Lee", "Gonzalez"
-    ]
-
-    name_exclusions_lower = {name.lower() for name in name_exclusions}
 
     for profile in profiles:
         education_entries = profile.get('education', [])
         for edu in education_entries:
             if isinstance(edu, dict):
-                institution = edu.get('institution', '')
+                institution = edu.get('institute', '')
                 degree = edu.get('degree', '')
                 if institution and degree:
                     education_data.append(f"{degree} from {institution}")
@@ -210,9 +231,8 @@ def collect_education_and_certifications(profiles):
             elif isinstance(cert, str):
                 cert_name = cert
 
-            if cert_name and cert_name.lower() not in name_exclusions_lower:
-                if not (len(cert_name.split()) >= 2 and cert_name.split()[0][0].isupper() and cert_name.split()[1][0].isupper()):
-                    certification_data.append(cert_name)
+            if cert_name:
+                certification_data.append(cert_name)
 
         career_summary = profile.get('carrierSummary', '')
         if career_summary:
@@ -237,6 +257,7 @@ def collect_education_and_certifications(profiles):
 
     return education_data, certification_data, experience_data
 
+
 def collect_projects_information(case_studies):
     """Collect project information including industries, clients, and features."""
     projects_by_industry = defaultdict(list)
@@ -260,7 +281,6 @@ def collect_projects_information(case_studies):
 
         title = case_study.get('title', 'Untitled Project')
         client = case_study.get('client', '')
-        # duration = case_study.get('duration', '')
         project_type = case_study.get('type', '')
         overview = case_study.get('overview', '')
         feature_statement = case_study.get('featureStatement', '')
@@ -282,7 +302,6 @@ def collect_projects_information(case_studies):
             'title': title,
             'technologies': tech_stack,
             'client': client,
-            # 'duration': duration,
             'type': project_type,
             'overview': overview,
             'feature_statement': feature_statement
@@ -290,12 +309,14 @@ def collect_projects_information(case_studies):
 
     return projects_by_industry, list(clients), list(all_features), list(all_project_types)
 
+
 def generate_agency_text(agency, profiles, case_studies):
-    """Generate comprehensive representative text for an agency."""
+    """Generate comprehensive representative text for an agency with individual profiles."""
+    if not profiles:
+        return ""
     agency_type = get_agency_type(agency, profiles)
 
-    # Modified to consistently use the same agency_type term throughout the text
-    agency_info = extract_agency_basic_info(agency, agency_type)
+    agency_info = extract_agency_basic_info(agency, agency_type, profiles)
 
     all_skills = collect_all_skills(profiles, case_studies)
 
@@ -303,42 +324,39 @@ def generate_agency_text(agency, profiles, case_studies):
 
     projects_by_industry, clients, features, project_types = collect_projects_information(case_studies)
 
-    team_size = len(profiles)
-    # Use singular "member" for freelancer for consistency
-    if agency_type == 'freelancer':
-        team_info = "The freelancer"
-    else:
-        team_info = f"The team consists of {team_size} {'members' if team_size > 1 else 'member'}"
+    has_data = bool(all_skills or education_data or certification_data or
+                    experience_data or projects_by_industry or clients or
+                    features or project_types)
+
+    if not has_data:
+        return agency_info
 
     skills_text = ""
     if all_skills:
-        skills_text = f" with expertise in {', '.join(all_skills)}"
+        if agency_type == 'freelancer':
+            skills_text = f" has expertise in {', '.join(all_skills)}"
+        else:
+            skills_text = f" with expertise in {', '.join(all_skills)}"
 
     education_text = ""
     if education_data:
         if agency_type == 'freelancer':
             education_text = f" They have educational background from {', '.join(education_data)}."
         else:
-            education_text = f" Team members have educational backgrounds from {', '.join(education_data)}."
+            education_text = f" Team members have following educational backgrounds : {', '.join(education_data)}."
 
     certification_text = ""
     if certification_data:
-        if agency_type == 'freelancer':
-            certification_text = f" Certifications held include {', '.join(certification_data)}."
-        else:
-            certification_text = f" Certifications held include {', '.join(certification_data)}."
+        certification_text = f" Certifications held include {', '.join(certification_data)}."
 
     experience_text = ""
     if experience_data:
-        key_experiences = experience_data[:5]
         if agency_type == 'freelancer':
-            experience_text = f" They have experience in {', '.join(key_experiences)}."
-            if len(experience_data) > 5:
-                experience_text = f" They have extensive experience across various roles and responsibilities."
+            experience_text = f" They have experience in {', '.join(experience_data)}."
+            name = profiles[0].get('firstName', 'Unnamed Professional')
+            experience_text=convert_to_third_person(experience_text,name)
         else:
-            experience_text = f" The team has experience in {', '.join(key_experiences)}."
-            if len(experience_data) > 5:
-                experience_text = f" The team has extensive experience across various roles and responsibilities."
+            experience_text = f" The team has experience in {', '.join(experience_data)}."
 
     project_types_text = ""
     if project_types:
@@ -374,30 +392,189 @@ def generate_agency_text(agency, profiles, case_studies):
     if features:
         features_text = f" Their projects feature {', '.join(features)}."
 
-    agency_text = (
-        f"{agency_info} {team_info}{skills_text}."
-        f"{education_text}{certification_text}{experience_text}"
-        f"{project_types_text}{industry_text}{clients_text}{features_text}"
-    )
+
+    if skills_text:
+        agency_text = f"{agency_info}{skills_text}."
+    else:
+        agency_text = agency_info
+
+    additional_sections = []
+    if education_text.strip():
+        additional_sections.append(education_text)
+    if certification_text.strip():
+        additional_sections.append(certification_text)
+    if experience_text.strip():
+        additional_sections.append(experience_text)
+    if project_types_text.strip():
+        additional_sections.append(project_types_text)
+    if industry_text.strip():
+        additional_sections.append(industry_text)
+    if clients_text.strip():
+        additional_sections.append(clients_text)
+    if features_text.strip():
+        additional_sections.append(features_text)
+
+    if additional_sections:
+        agency_text += " " + " ".join(additional_sections)
+
+    if len(profiles) > 1 or agency_type == 'business':
+        agency_text += "\n\nTeam members include:\n\n"
+
+        for profile in profiles:
+            name = profile.get('firstName', 'Unnamed Professional')
+
+            profile_skills = []
+            for skill in profile.get('highlightedSkills', []) + profile.get('additionalSkill', []):
+                if isinstance(skill, dict):
+                    skill_name = skill.get('name', '')
+                    if skill_name:
+                        profile_skills.append(skill_name)
+                elif isinstance(skill, str):
+                    profile_skills.append(skill)
+
+            education = []
+            for edu in profile.get('education', []):
+                if isinstance(edu, dict):
+                    institution = edu.get('institution', '')
+                    degree = edu.get('degree', '')
+                    if institution and degree:
+                        education.append(f"{degree} from {institution}")
+                    elif institution:
+                        education.append(institution)
+
+            certifications = []
+            for cert in profile.get('certifications', []):
+                cert_name = ""
+                if isinstance(cert, dict):
+                    cert_name = cert.get('name', '')
+                elif isinstance(cert, str):
+                    cert_name = cert
+
+                if cert_name:
+                    certifications.append(cert_name)
+
+            experience_text = ""
+            career_summary = profile.get('carrierSummary', '')
+            if career_summary:
+                experience_text += convert_to_third_person(career_summary, name) + " "
+
+            experience_entries = profile.get('experience', [])
+            for exp in experience_entries:
+                if isinstance(exp, dict):
+                    position = exp.get('position', '')
+                    company = exp.get('company', '')
+                    description = exp.get('responsibilityDescription', '')
+
+                    exp_text = ""
+                    if position and company:
+                        exp_text += f"Worked as {position} at {company}. "
+
+                    if description:
+                        exp_text += convert_to_third_person(description, name)
+
+                    if exp_text:
+                        experience_text += exp_text + " "
+
+            profile_text = f"{name}: "
+
+            if profile_skills:
+                profile_text += f"Has expertise in {', '.join(profile_skills)}. "
+
+            if education:
+                profile_text += f"Educated at {', '.join(education)}. "
+
+            if certifications:
+                profile_text += f"Holds certifications in {', '.join(certifications)}. "
+
+            if experience_text:
+                profile_text += f"{experience_text}"
+
+            agency_text += profile_text + "\n\n"
 
     agency_text = agency_text.replace("  ", " ")
     agency_text = agency_text.replace("..", ".")
 
     return agency_text.strip()
 
-def generate_and_store_agency_texts():
-    """Generate representative texts for all agencies and store them in MongoDB."""
+
+def convert_to_third_person(text, name):
+    """Convert first-person text to third-person using the given name."""
+    replacements = {
+        r'\bI\b': name,
+        r'\bMy\b': f"{name}'s",
+        r'\bmy\b': f"{name}'s",
+        r'\bme\b': name,
+        r'\bmyself\b': f"{name}self",
+        r'\bmine\b': f"{name}'s",
+        r'\bI\'ve\b': f"{name} has",
+        r'\bI\'m\b': f"{name} is",
+        r'\bI\'d\b': f"{name} would",
+        r'\bI\'ll\b': f"{name} will"
+    }
+
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text)
+
+    return text
+
+
+def setup_embeddings():
+    """Set up Mistral AI embeddings."""
+    api_key = os.getenv('MISTRAL_API_KEY')
+    if api_key is None:
+        print('You need to set your environment variable MISTRAL_API_KEY')
+        exit(1)
+
+    embeddings = MistralAIEmbeddings(
+        model="mistral-embed",
+        mistral_api_key=api_key
+    )
+    return embeddings
+
+
+def average_embeddings(embeddings_list):
+    """
+    Calculate the average of multiple embeddings.
+
+    Args:
+        embeddings_list: List of embedding vectors
+
+    Returns:
+        A single aggregated embedding vector (average)
+    """
+    if not embeddings_list:
+        return None
+
+    np_embeddings = np.array(embeddings_list)
+
+    avg_embedding = np.mean(np_embeddings, axis=0).tolist()
+
+    return avg_embedding
+
+
+def generate_and_store_agency_texts_and_embeddings():
+    """
+    Generate representative texts for all agencies, create both:
+    1. Per-chunk embeddings
+    2. A single aggregated embedding per agency
+    Then store them in MongoDB.
+    """
     db = connect_to_mongodb()
     agencies_collection = db["agencies"]
+    embeddings_model = setup_embeddings()
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        add_start_index=True
+    )
 
     agencies = list(agencies_collection.find())
     print(f"Found {len(agencies)} agencies")
-
     operations = []
 
     for i, agency in enumerate(agencies):
         agency_id = agency.get('_id')
-
         profiles = extract_profiles_for_agency(db, agency_id)
         case_studies = extract_case_studies_for_agency(db, agency_id)
 
@@ -405,14 +582,42 @@ def generate_and_store_agency_texts():
 
         agency_text = generate_agency_text(agency, profiles, case_studies)
 
+        update_data = {
+            "representativeText": agency_text,
+            "textGeneratedAt": datetime.now()
+        }
+
+        if agency_text:
+            try:
+                chunks = text_splitter.split_text(agency_text)
+                print(f"Split into {len(chunks)} chunks")
+
+                chunk_embeddings = []
+                raw_embeddings = []
+
+                for idx, chunk in enumerate(chunks):
+                    embedding = embeddings_model.embed_query(chunk)
+                    chunk_embeddings.append({
+                        "chunkIndex": idx,
+                        "text": chunk,
+                        "embedding": embedding
+                    })
+                    raw_embeddings.append(embedding)
+
+                aggregated_embedding = average_embeddings(raw_embeddings)
+
+                update_data["textChunks"] = chunk_embeddings
+                update_data["aggregatedEmbedding"] = aggregated_embedding
+
+            except Exception as e:
+                print(f"Error generating embeddings for agency {agency.get('name', 'Unnamed')}: {e}")
+
         operations.append(
             UpdateOne(
                 {"_id": agency_id},
-                {"$set": {"representativeText": agency_text, "textGeneratedAt": datetime.now()}}
+                {"$set": update_data}
             )
         )
-
-        print(f"Generated text for {agency.get('name', 'Unnamed')}: {agency_text[:100]}...")
 
         if len(operations) >= 50:
             result = agencies_collection.bulk_write(operations)
@@ -423,11 +628,24 @@ def generate_and_store_agency_texts():
         result = agencies_collection.bulk_write(operations)
         print(f"Bulk updated {result.modified_count} agencies")
 
+
 def main():
     """Main function to run the agency text generation process."""
     print("Starting agency text generation process...")
-    generate_and_store_agency_texts()
+    generate_and_store_agency_texts_and_embeddings()
     print("Agency text generation process completed.")
+    choice = input("Choose an option: ").strip()
+
+    if choice == '1':
+        print("Starting agency text generation process...")
+        generate_and_store_agency_texts_and_embeddings()
+        print("Agency text generation process completed.")
+    elif choice.lower() == 'q':
+        print("Exiting.")
+    else:
+        print("Invalid option. Please try again.")
+
 
 if __name__ == "__main__":
     main()
+
