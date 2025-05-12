@@ -1,14 +1,12 @@
 import os
 from pymongo import MongoClient, UpdateOne
 from collections import defaultdict
-from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
 def connect_to_mongodb():
-    """Connect to MongoDB using environment variables."""
     mongo_uri = os.getenv("MONGO_URI")
     if not mongo_uri:
         print("You need to set MONGO_URI in your environment variables.")
@@ -20,14 +18,12 @@ def connect_to_mongodb():
 
 
 def get_agency_type(profiles):
-    """Determine if agency is a business or freelancer based on team size."""
     if len(profiles) > 1:
         return 'agency'
     return 'freelancer'
 
 
 def extract_profiles_for_agency(db, agency_id):
-    """Extract all profiles related to a specific agency using a more robust approach."""
     profiles_collection = db["profiles"]
     agency_id_str = str(agency_id)
     all_profiles = list(profiles_collection.find())
@@ -44,7 +40,6 @@ def extract_profiles_for_agency(db, agency_id):
 
 
 def extract_case_studies_for_agency(db, agency_id):
-    """Extract all case studies related to a specific agency, handling both ObjectId and string IDs."""
     case_studies_collection = db["case_studies"]
     agency_id_str = str(agency_id)
     case_studies = list(case_studies_collection.find({"caseStudyBusinessId": agency_id_str}))
@@ -52,7 +47,6 @@ def extract_case_studies_for_agency(db, agency_id):
 
 
 def collect_all_skills(profiles, case_studies):
-    """Collect all unique skills from profiles and case studies in a case-insensitive manner."""
     skill_case_map = {}
 
     for profile in profiles:
@@ -97,7 +91,6 @@ def collect_all_skills(profiles, case_studies):
 
 
 def collect_projects_information(case_studies):
-    """Collect project information including project types and tech stacks in a case-insensitive manner."""
     projects_info = []
     tech_case_map = {}
 
@@ -127,7 +120,6 @@ def collect_projects_information(case_studies):
 
 
 def generate_agency_text(agency, profiles, case_studies):
-    """Generate simplified text representation for agency data."""
     if not profiles:
         return ""
 
@@ -187,7 +179,6 @@ def generate_agency_text(agency, profiles, case_studies):
 
 
 def generate_and_store_agency_texts():
-    """Generate simplified text representations for all agencies and store them in MongoDB."""
     db = connect_to_mongodb()
     agencies_collection = db["agencies"]
 
@@ -226,8 +217,7 @@ def generate_and_store_agency_texts():
 
 
 def main():
-    """Main function to run the agency text generation process."""
-    print("Starting simplified agency text generation process...")
+    print("Starting agency text generation process...")
     generate_and_store_agency_texts()
     print("Agency text generation process completed.")
 
