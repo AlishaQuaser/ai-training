@@ -6,6 +6,7 @@ import numpy as np
 
 load_dotenv()
 
+
 def connect_to_mongodb():
     """Connect to MongoDB using environment variables."""
     mongo_uri = os.getenv("MONGO_URI")
@@ -16,6 +17,7 @@ def connect_to_mongodb():
     client = MongoClient(mongo_uri)
     db = client["hiretalentt"]
     return db, client
+
 
 def setup_embeddings():
     """Set up Mistral AI embeddings."""
@@ -29,6 +31,7 @@ def setup_embeddings():
         mistral_api_key=api_key
     )
     return embeddings
+
 
 def hybrid_semantic_search(query, db, embeddings_model, top_n=5, approach="hybrid"):
     """
@@ -178,6 +181,7 @@ def hybrid_semantic_search(query, db, embeddings_model, top_n=5, approach="hybri
     else:
         raise ValueError("Invalid approach. Use 'fast', 'precise', or 'hybrid'.")
 
+
 def fallback_precise_search(query, db, embeddings_model, top_n=5):
     """Fallback implementation for precise search if the aggregation pipeline fails."""
     agencies_collection = db["agencies"]
@@ -224,6 +228,7 @@ def fallback_precise_search(query, db, embeddings_model, top_n=5):
 
     return results
 
+
 def cosine_similarity(vec1, vec2):
     """Calculate cosine similarity between two vectors."""
     v1 = np.array(vec1)
@@ -237,6 +242,7 @@ def cosine_similarity(vec1, vec2):
         return 0
 
     return dot_product / (norm_a * norm_b)
+
 
 def search_cli():
     """Command-line interface for semantic search."""
@@ -311,5 +317,7 @@ def search_cli():
         else:
             print("No matching agencies found.")
 
+
 if __name__ == "__main__":
     search_cli()
+
