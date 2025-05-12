@@ -2,6 +2,8 @@ import os
 from pymongo import MongoClient, UpdateOne
 from collections import defaultdict
 from dotenv import load_dotenv
+from langchain_mistralai import MistralAIEmbeddings
+
 
 load_dotenv()
 
@@ -15,6 +17,18 @@ def connect_to_mongodb():
     client = MongoClient(mongo_uri)
     db = client["hiretalentt"]
     return db
+
+def setup_embeddings():
+    api_key = os.getenv('MISTRAL_API_KEY')
+    if api_key is None:
+        print('You need to set your environment variable MISTRAL_API_KEY')
+        exit(1)
+
+    embeddings = MistralAIEmbeddings(
+        model="mistral-embed",
+        mistral_api_key=api_key
+    )
+    return embeddings
 
 
 def get_agency_type(profiles):
@@ -181,6 +195,7 @@ def generate_agency_text(agency, profiles, case_studies):
 def generate_and_store_agency_texts():
     db = connect_to_mongodb()
     agencies_collection = db["agencies"]
+    embeddings_model = setup_embeddings()
 
     agencies = list(agencies_collection.find())
     print(f"Found {len(agencies)} agencies")
@@ -198,6 +213,14 @@ def generate_and_store_agency_texts():
         update_data = {
             "representativeText": agency_text,
         }
+
+        if agency_text:
+            try:
+                embedding = embeddings_model.embed_query(agency_text)
+                update_data["embedding"] = embedding
+
+            except Exception as e:
+                print(f"Error generating embedding for agency {agency.get('name', 'Unnamed')}: {e}")
 
         operations.append(
             UpdateOne(
