@@ -31,19 +31,19 @@ def search_cli():
     db, client = connect_to_mongodb()
     embeddings = setup_embeddings()
 
-    collection = db["agencies"]
+    collection = db["agencies_test_data"]
 
     vector_store = MongoDBAtlasVectorSearch(
         collection=collection,
         embedding=embeddings,
-        index_name="agencies_search_index",
+        index_name="default",
         text_key="representativeText",
         embedding_key="embedding"
     )
 
     retriever = MongoDBAtlasHybridSearchRetriever(
         vectorstore=vector_store,
-        search_index_name="agencies_search_index",
+        search_index_name="default",
         top_k=5,
         fulltext_penalty=50,
         vector_penalty=50
