@@ -8,11 +8,9 @@ import re
 
 class AgencyGenerator:
     def __init__(self, agency_json_path=None):
-        # Expanded and comprehensive lists to guide generation
         self.agency_json_path = agency_json_path
         self.loaded_agencies = self.load_agencies_from_json() if agency_json_path else []
 
-        # Expanded and comprehensive lists to guide generation
         self.tech_keywords = [
             'Machine Learning', 'Cloud Computing', 'Blockchain',
             'Cybersecurity', 'Web Development', 'Mobile App',
@@ -27,7 +25,6 @@ class AgencyGenerator:
             'Agricultural Technology', 'Energy Sector'
         ]
 
-        # Greatly expanded and comprehensive tech lists
         self.programming_languages = [
             'JavaScript', 'Python', 'Java', 'TypeScript', 'Go',
             'Rust', 'Kotlin', 'Swift', 'Scala', 'Dart', 'C#',
@@ -70,7 +67,6 @@ class AgencyGenerator:
             'AI', 'Web', 'Mobile', 'Enterprise', 'Network'
         ]
 
-        # Randomly choose between different naming patterns
         name_patterns = [
             lambda: f"{random.choice(prefixes)} {random.choice(tech_keywords)} {random.choice(suffixes)}",
             lambda: f"{random.choice(tech_keywords)} {random.choice(suffixes)}",
@@ -110,16 +106,13 @@ class AgencyGenerator:
 
     def generate_tech_stack(self, is_agency=True):
         """Generate a realistic tech stack."""
-    # For agencies, generate at least 50 unique skills
         if is_agency:
-            # Combine all possible tech categories and expand the list
             all_techs = (
                     self.programming_languages +
                     self.frameworks_libraries +
                     self.cloud_platforms +
                     self.databases +
                     [
-                        # Add more specialized and niche technologies
                         'GraphQL', 'gRPC', 'WebAssembly', 'Terraform',
                         'Ansible', 'Docker', 'Nginx', 'Apache',
                         'Kafka', 'RabbitMQ', 'Redis Cluster', 'Elasticsearch',
@@ -134,13 +127,11 @@ class AgencyGenerator:
                     ]
             )
 
-            # Ensure at least 50 unique skills
             if len(all_techs) < 50:
                 raise ValueError("Not enough unique technologies to generate 50 skills")
 
             tech_stack = random.sample(all_techs, min(50, len(all_techs)))
         else:
-            # Existing freelancer logic
             tech_count = random.randint(3, 6)
             all_techs = (
                     self.programming_languages +
@@ -155,7 +146,6 @@ class AgencyGenerator:
 
     def generate_project_details(self):
         """Generate project details with domain, technologies, and case study style."""
-    # Expand domain list for more variety
         detailed_domains = [
             'Financial Sector Digital Transformation',
             'Healthcare Technology Innovation',
@@ -176,10 +166,8 @@ class AgencyGenerator:
             'IoT and Embedded Systems'
         ]
 
-        # Select a random detailed domain
         domain = random.choice(detailed_domains)
 
-        # Combine all tech categories for project technologies
         all_techs = (
                 self.programming_languages +
                 self.frameworks_libraries +
@@ -187,10 +175,8 @@ class AgencyGenerator:
                 self.databases
         )
 
-        # Generate project name with more professional tone
         project_name = f"Case Study: {domain}"
 
-        # Select 2-6 unique technologies for the project
         tech_count = random.randint(2, 6)
         tech_count = min(tech_count, len(all_techs))
         project_techs = random.sample(all_techs, tech_count)
@@ -199,9 +185,7 @@ class AgencyGenerator:
 
     def generate_representative_text(self, is_agency=True, agency_details=None):
         """Generate comprehensive representative text."""
-        # Generate basic details
         if is_agency:
-            # Use details from the loaded agencies if available
             if agency_details:
                 name = agency_details.get('name', 'Unknown Agency')
                 team_size = random.randint(15, 250)
@@ -215,10 +199,8 @@ class AgencyGenerator:
             team_size = 1
             founded_year = random.randint(2010, 2023)
 
-        # Generate tech stack
         tech_stack = self.generate_tech_stack(is_agency)
 
-        # Generate multiple projects
         num_projects = random.randint(7, 10) if is_agency else random.randint(1, 3)
         projects = []
 
@@ -230,12 +212,9 @@ class AgencyGenerator:
                 'technologies': project_techs
             })
 
-        # Construct representative text
         if is_agency:
-            # Format for agency representation
             rep_text = f"{name} is an agency that has {team_size} team members with the following skill sets: {', '.join(tech_stack)}. "
 
-            # Grouping projects by domain if possible
             domain_projects = {}
             for proj in projects:
                 if proj['domain'] not in domain_projects:
@@ -256,7 +235,6 @@ class AgencyGenerator:
             rep_text += f"This agency is operational since {founded_year}."
 
         else:
-            # Format for freelancer representation
             rep_text = f"{name} is a freelancer who has the following skill set: {', '.join(tech_stack)}. "
 
             project_descriptions = []
@@ -281,14 +259,11 @@ class AgencyGenerator:
         """Generate a list of agency and freelancer documents."""
         documents = []
 
-        # Generate agencies using loaded data or random generation
         for i in range(num_agencies):
-            # Use agency details from loaded JSON if available
             agency_details = self.loaded_agencies[i] if i < len(self.loaded_agencies) else None
 
             details, rep_text = self.generate_representative_text(is_agency=True, agency_details=agency_details)
 
-            # Use agency details from JSON for hourly rate if available
             if agency_details and 'hourlyRate' in agency_details:
                 hourly_rate = agency_details['hourlyRate']
             else:
@@ -308,7 +283,6 @@ class AgencyGenerator:
             }
             documents.append(doc)
 
-        # Generate freelancers
         for _ in range(num_freelancers):
             details, rep_text = self.generate_representative_text(is_agency=False)
 
@@ -333,22 +307,18 @@ def main():
     load_dotenv()
 
     try:
-        # Prompt for input JSON file
         agency_json_path = input("Enter path to the JSON file with agency details (or press Enter to skip): ").strip()
 
         print("Starting generation of agency and freelancer documents...")
         start_time = time.time()
 
-        # Initialize generator with optional JSON path
         generator = AgencyGenerator(agency_json_path if agency_json_path else None)
 
-        # Generate documents
         documents = generator.generate_agencies_and_freelancers(
             num_agencies=500,
             num_freelancers=50
         )
 
-        # Save to JSON file with timestamp
         timestamp = int(time.time())
         filename = f"agency_freelancer_docs_{timestamp}.json"
 
@@ -361,7 +331,6 @@ def main():
         print(f"Successfully generated and saved {len(documents)} documents to {filename}")
         print(f"Processing completed in {end_time - start_time:.2f} seconds")
 
-        # Show a few sample entries
         print("\n--- Sample Entries ---")
         for i, doc in enumerate(documents[:3], 1):
             print(f"\nEntry {i}:")
