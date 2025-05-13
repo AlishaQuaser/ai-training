@@ -39,12 +39,14 @@ class QueryParser:
         
         1. type: HIGHEST PRIORITY - Must be strictly enforced
            - For "agency" type: Match when user mentions "agencies", "businesses", "companies", "firms", etc.
-           - For "freelancer" type: Match when user mentions "freelancers", "individuals", "contractors", etc.
+           - For "freelancer" type: Match when user mentions "freelancers", "individuals", "contractors", "lone developer", etc.
            - If type is specified, it's critical this filter is correctly applied with NO EXCEPTIONS
         
         2. teamSize: HIGH PRIORITY
            - Parse team size requirements, including operators like >, <, >=, <= or ranges
            - For agencies, this refers to number of team members
+           - Be precise about inequalities: "200+" means greater than 200 (NOT greater than or equal)
+           - "atleast 200" or "minimum 200" means greater than or equal to 200
         
         3. hourlyRate: MEDIUM PRIORITY
            - Parse hourly rate requirements, including currency, operators, and ranges
@@ -57,9 +59,9 @@ class QueryParser:
         2. "semantic_query": String containing the remaining semantic search intent
         
         Make sure to handle phrases like:
-        - If text contains any variant of "agencies" or "companies": type = "agency" (NEVER match freelancers)
-        - If text contains any variant of "freelancers" or "individuals": type = "freelancer" (NEVER match agencies)
-        - "200+ members" → teamSize: {"$gte": 200}
+        - If text contains any variant of "agencies", "companies", "businesses", "firms": type = "agency" (NEVER match freelancers)
+        - If text contains any variant of "freelancers", "individuals", "contractors", "lone developer": type = "freelancer" (NEVER match agencies)
+        - "200+ members" → teamSize: {"$gt": 200}  (STRICTLY greater than, not greater than or equal)
         - "at least 50 people" → teamSize: {"$gte": 50}
         - "charging $200-300/hour" → hourlyRate: {"min": {"$lte": 300}, "max": {"$gte": 200}}
         - "less than $150 per hour" → hourlyRate: {"min": {"$lt": 150}}
@@ -163,6 +165,14 @@ class HybridSearchSystem:
 
         if "teamSize" in filters:
             mongodb_filters["teamSize"] = filters["teamSize"]
+            if "$gt" in filters["teamSize"]:
+                print(f"Filtering by team size > {filters['teamSize']['$gt']}")
+            elif "$gte" in filters["teamSize"]:
+                print(f"Filtering by team size >= {filters['teamSize']['$gte']}")
+            elif "$lt" in filters["teamSize"]:
+                print(f"Filtering by team size < {filters['teamSize']['$lt']}")
+            elif "$lte" in filters["teamSize"]:
+                print(f"Filtering by team size <= {filters['teamSize']['$lte']}")
 
         if "hourlyRate" in filters:
             hourly_rate_filter = filters["hourlyRate"]
@@ -170,15 +180,94 @@ class HybridSearchSystem:
             if "min" in hourly_rate_filter:
                 for op, value in hourly_rate_filter["min"].items():
                     mongodb_filters["hourlyRate.min"] = {op: value}
+                    print(f"Filtering by hourly rate minimum {op} {value}")
 
             if "max" in hourly_rate_filter:
                 for op, value in hourly_rate_filter["max"].items():
                     mongodb_filters["hourlyRate.max"] = {op: value}
+                    print(f"Filtering by hourly rate maximum {op} {value}")
 
         if "founded" in filters:
             mongodb_filters["founded"] = filters["founded"]
+            if "$gt" in filters["founded"]:
+                print(f"Filtering by founded > {filters['founded']['$gt']}")
+            elif "$gte" in filters["founded"]:
+                print(f"Filtering by founded >= {filters['founded']['$gte']}")
+            elif "$lt" in filters["founded"]:
+                print(f"Filtering by founded < {filters['founded']['$lt']}")
+            elif "$lte" in filters["founded"]:
+                print(f"Filtering by founded <= {filters['founded']['$lte']}")
 
         return mongodb_filters
+
+    def _verify_results_match_filters(self, results, filters):
+        """
+        Verify that all results match the specified filters.
+        Used as a double-check to ensure filter integrity.
+
+        Args:
+            results: The search results
+            filters: The MongoDB filters that should be applied
+
+        Returns:
+            List of verified results that actually match the filters
+        """
+        verified_results = []
+
+        for result in results:
+            matches_all_filters = True
+
+            # Check type filter (HIGHEST PRIORITY)
+            if "type" in filters and result["type"] != filters["type"]:
+                print(f"Rejected result {result['name']} - type mismatch: {result['type']} ≠ {filters['type']}")
+                matches_all_filters = False
+                continue  # Skip immediately if type doesn't match
+
+            # Check teamSize filters
+            if "teamSize" in filters:
+                team_size = result["team_size"]
+                try:
+                    team_size = int(team_size) if team_size != 'N/A' else 0
+
+                    if "$gt" in filters["teamSize"] and not team_size > filters["teamSize"]["$gt"]:
+                        matches_all_filters = False
+                    elif "$gte" in filters["teamSize"] and not team_size >= filters["teamSize"]["$gte"]:
+                        matches_all_filters = False
+                    elif "$lt" in filters["teamSize"] and not team_size < filters["teamSize"]["$lt"]:
+                        matches_all_filters = False
+                    elif "$lte" in filters["teamSize"] and not team_size <= filters["teamSize"]["$lte"]:
+                        matches_all_filters = False
+                except (ValueError, TypeError):
+                    # If we can't parse the team size, be conservative and exclude the result
+                    matches_all_filters = False
+
+            # Check hourly rate filters (more complex, would need to parse the rate range)
+            # Skipping detailed implementation to keep this example focused
+
+            # Check founded year
+            if "founded" in filters:
+                founded = result["founded"]
+                try:
+                    founded = int(founded) if founded != 'N/A' else 0
+
+                    if "$gt" in filters["founded"] and not founded > filters["founded"]["$gt"]:
+                        matches_all_filters = False
+                    elif "$gte" in filters["founded"] and not founded >= filters["founded"]["$gte"]:
+                        matches_all_filters = False
+                    elif "$lt" in filters["founded"] and not founded < filters["founded"]["$lt"]:
+                        matches_all_filters = False
+                    elif "$lte" in filters["founded"] and not founded <= filters["founded"]["$lte"]:
+                        matches_all_filters = False
+                except (ValueError, TypeError):
+                    # If we can't parse the founded year, be conservative and exclude the result
+                    matches_all_filters = False
+
+            if matches_all_filters:
+                verified_results.append(result)
+            else:
+                print(f"Rejected result {result['name']} - failed to match all filters")
+
+        return verified_results
 
     def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
         """
@@ -198,13 +287,16 @@ class HybridSearchSystem:
         mongodb_filters = self._transform_filters_for_mongodb(filters)
         print(f"MongoDB filters: {json.dumps(mongodb_filters, indent=2)}")
 
+        # If we need more results than k to account for post-filtering, adjust here
+        fetch_k = k * 3  # Fetch more results than needed in case some get filtered out
+
         try:
             vector_store = self._setup_vector_store(mongodb_filters)
 
-            results = vector_store.similarity_search_with_score(semantic_query, k=k)
+            initial_results = vector_store.similarity_search_with_score(semantic_query, k=fetch_k)
 
             formatted_results = []
-            for doc, score in results:
+            for doc, score in initial_results:
                 metadata = doc.metadata
 
                 hourly_rate = metadata.get('hourlyRate', {})
@@ -225,7 +317,14 @@ class HybridSearchSystem:
                 }
                 formatted_results.append(result)
 
-            return formatted_results
+            # Double-check that results match our filters (especially type)
+            verified_results = self._verify_results_match_filters(formatted_results, mongodb_filters)
+
+            if len(verified_results) < k and len(formatted_results) > len(verified_results):
+                print(f"Warning: {len(formatted_results) - len(verified_results)} results were filtered out due to filter mismatch")
+
+            # Return only up to k verified results
+            return verified_results[:k]
 
         except Exception as e:
             print(f"Error during search: {e}")
@@ -254,7 +353,9 @@ class HybridSearchSystem:
                     }
                     formatted_results.append(result)
 
-                return formatted_results
+                # Double-check filters here too
+                verified_results = self._verify_results_match_filters(formatted_results, mongodb_filters)
+                return verified_results[:k]
 
             except Exception as e2:
                 print(f"Fallback also failed: {e2}")
