@@ -1,152 +1,106 @@
+from dotenv import load_dotenv
+
+load_dotenv()
 import os
 from pymongo import MongoClient
 from langchain_openai import OpenAIEmbeddings
 from langchain_mongodb import MongoDBAtlasVectorSearch
-from langchain_mongodb.retrievers.hybrid_search import MongoDBAtlasHybridSearchRetriever
-from dotenv import load_dotenv
-import re
-
-load_dotenv()
 
 
-def connect_to_mongodb():
-    mongo_uri = os.getenv("MONGO_URI")
-    if not mongo_uri:
-        print("Please set environment variable MONGO_URI")
-        exit(1)
+class MongoDBSimilaritySearch:
+    def __init__(self):
+        self.api_key = os.getenv('OPENAI_API_KEY')
+        if self.api_key is None:
+            print('You need to set your environment variable OPENAI_API_KEY')
+            exit(1)
 
-    client = MongoClient(mongo_uri)
-    db = client["hiretalentt"]
-    return db, client
+        self.embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-large",
+            openai_api_key=self.api_key,
+            dimensions=2048
+        )
 
+        # Connect to MongoDB
+        self.mongo_uri = os.getenv("MONGO_URI")
+        if not self.mongo_uri:
+            print("You need to set MONGO_URI in your environment variables.")
+            exit(1)
 
-def setup_embeddings():
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        print("Please set environment variable OPENAI_API_KEY")
-        exit(1)
+        self.client = MongoClient(self.mongo_uri)
+        self.db = self.client["hiretalentt"]  # Use your actual database name
+        self.collection = self.db["agencies_new"]  # Use your actual collection name
 
-    return OpenAIEmbeddings(
-        model="text-embedding-3-large",
-        openai_api_key=api_key,
-        dimensions=2048
-    )
+        # Set up vector store
+        self.vector_store = self._setup_vector_store()
 
+    def _setup_vector_store(self):
+        """Connect to the vector store"""
+        # Define metadata fields to include in results
+        metadata_field_names = ["_id", "name", "text", "hourlyRate"]
 
-def parse_query(query):
-    """Parse complex queries to extract special conditions like team size requirements."""
-    conditions = {
-        "text_query": query,
-        "min_team_size": None,
-        "skills": []
-    }
+        # Create vector store connection
+        vector_store = MongoDBAtlasVectorSearch(
+            collection=self.collection,
+            embedding=self.embeddings,  # Required for the interface but used only for query encoding
+            index_name="agencies_new_search_index",
+            text_key="representativeText",
+            embedding_key="embedding",
+            metadata_field_names=metadata_field_names
+        )
 
-    team_size_match = re.search(r'(\d+)\s+team\s+members', query, re.IGNORECASE)
-    if team_size_match:
-        conditions["min_team_size"] = int(team_size_match.group(1))
+        return vector_store
 
-    skills_match = re.findall(r'skills?\s+in\s+([A-Za-z0-9\.\+]+)', query, re.IGNORECASE)
-    if skills_match:
-        conditions["skills"] = skills_match
+    def perform_similarity_search(self, query, k=5):
+        """Perform similarity search using the vector store"""
+        if not self.vector_store:
+            print("Vector store not initialized.")
+            return None
 
-    return conditions
+        # LangChain will handle embedding generation internally
+        results = self.vector_store.similarity_search_with_score(query, k=k)
+        return results
 
+    def format_search_results(self, results):
+        """Format search results for display"""
+        formatted_results = []
 
-def filter_results(results, conditions):
-    """Filter results based on extracted conditions."""
-    filtered_results = []
+        for i, (doc, score) in enumerate(results):
+            formatted_results.append(f"\n--- Result {i+1} (Similarity Score: {score:.4f}) ---")
+            formatted_results.append(f"ID: {doc.metadata.get('_id', 'Unknown ID')}")
+            formatted_results.append(f"Name: {doc.metadata.get('name', 'Unknown Name')}")
+            formatted_results.append(f"Hourly Rate: {doc.metadata.get('hourlyRate', 'NA')}")
+            formatted_results.append(f"Content: {doc.page_content}")
 
-    for doc in results:
-        meets_criteria = True
-        text_content = doc.page_content.lower() + " " + doc.metadata.get('text', '').lower()
+        return "\n".join(formatted_results)
 
-        if conditions["min_team_size"]:
-            team_size_match = re.search(r'(\d+)\s+team\s+members', text_content)
-            if not team_size_match or int(team_size_match.group(1)) < conditions["min_team_size"]:
-                meets_criteria = False
-
-        for skill in conditions["skills"]:
-            skill_pattern = r'\b' + re.escape(skill) + r'\b'
-            if not re.search(skill_pattern, text_content, re.IGNORECASE):
-                meets_criteria = False
-
-        if meets_criteria:
-            filtered_results.append(doc)
-
-    return filtered_results
-
-
-def search_cli():
-    db, client = connect_to_mongodb()
-    embeddings = setup_embeddings()
-
-    collection = db["agencies_new"]
-
-    metadata_field_names = ["_id", "name", "text", "hourlyRate", "teamSize", "skills"]
-
-    vector_store = MongoDBAtlasVectorSearch(
-        collection=collection,
-        embedding=embeddings,
-        index_name="agencies_new_search_index",
-        text_key="representativeText",
-        embedding_key="embedding",
-        metadata_field_names=metadata_field_names
-    )
+    def close(self):
+        """Close the MongoDB connection"""
+        if self.client:
+            self.client.close()
 
 
-    retriever = MongoDBAtlasHybridSearchRetriever(
-        vectorstore=vector_store,
-        search_index_name="agencies_new_search_index",
-        top_k=100,
-        fulltext_penalty=30,
-        vector_penalty=40
-    )
+def main():
+    search_engine = MongoDBSimilaritySearch()
 
-    print("Welcome to Advanced Agency Hybrid Search")
-    print("----------------------------------------")
+    print("\n=== MongoDB Similarity Search ===")
+    print("Type 'quit' to exit")
 
-    while True:
-        query = input("\nEnter your search query (or 'q' to quit): ").strip()
-        if query.lower() == 'q':
-            break
-        if not query:
-            print("Empty query. Please try again.")
-            continue
+    try:
+        while True:
+            query = input("\nEnter your search query: ")
+            if query.lower() == 'quit':
+                break
 
-        print(f"\nSearching for: '{query}'...\n")
-
-        conditions = parse_query(query)
-
-        initial_results = retriever.invoke(conditions["text_query"])
-
-        results = filter_results(initial_results, conditions)
-
-        if results:
-            print(f"Found {len(results)} matching agencies:")
-            for i, doc in enumerate(results):
-                doc_id = doc.metadata.get('_id', 'No ID')
-                print(f"{i+1}. ID: {doc_id}")
-                print(f"   Name: {doc.metadata.get('name', 'Unknown Name')}")
-                print(f"   Hourly Rate: {doc.metadata.get('hourlyRate', 'NA')}")
-
-                team_size_match = re.search(r'(\d+)\s+team\s+members', doc.page_content)
-                team_size = team_size_match.group(1) if team_size_match else "Unknown"
-                print(f"   Team Size: {team_size}")
-
-                skills_text = re.search(r'skill sets?: (.*?)\.', doc.page_content)
-                skills = skills_text.group(1) if skills_text else "Not specified"
-                print(f"   Skills: {skills}")
-
-                print(f"   Full-text score: {doc.metadata.get('fulltext_score', 0):.2f}")
-                print(f"   Vector score: {doc.metadata.get('vector_score', 0):.2f}")
-                print(f"   Total score: {doc.metadata.get('score', 0):.2f}")
-                print("\n" + "-" * 70)
-        else:
-            print("No matching agencies found.")
-
-    client.close()
-    print("\nThank you for using Advanced Agency Hybrid Search. Goodbye!")
+            results = search_engine.perform_similarity_search(query, k=5)
+            if results:
+                formatted_results = search_engine.format_search_results(results)
+                print(formatted_results)
+            else:
+                print("No results found.")
+    finally:
+        search_engine.close()
+        print("\nThank you for using MongoDB Similarity Search. Goodbye!")
 
 
 if __name__ == "__main__":
-    search_cli()
+    main()
