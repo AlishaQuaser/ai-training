@@ -33,12 +33,15 @@ def search_cli():
 
     collection = db["agencies_test_data"]
 
+    metadata_field_names = ["_id", "name", "text", "hourly_rate"]
+
     vector_store = MongoDBAtlasVectorSearch(
         collection=collection,
         embedding=embeddings,
         index_name="default",
         text_key="representativeText",
-        embedding_key="embedding"
+        embedding_key="embedding",
+        metadata_field_names=metadata_field_names
     )
 
     retriever = MongoDBAtlasHybridSearchRetriever(
@@ -64,9 +67,13 @@ def search_cli():
         results = retriever.invoke(query)
 
         if results:
+            print(results[0])
             for i, doc in enumerate(results):
-                print(f"{i+1}. {doc.metadata.get('name', 'Unknown Name')}")
-                print(f"   Content: {doc.page_content[:200]}...")
+                doc_id = doc.metadata.get('_id', 'No ID')
+                print(f"{i+1}. ID: {doc_id}")
+                print(f"   Name: {doc.metadata.get('name', 'Unknown Name')}")
+                print(f"   Hourly Rates: {doc.metadata.get('hourlyRate', 'NA')}")
+                print(f"   Content: {doc.page_content}")
                 print(f"   Full-text score: {doc.metadata.get('fulltext_score', 0):.2f}")
                 print(f"   Vector score: {doc.metadata.get('vector_score', 0):.2f}")
                 print(f"   Total score: {doc.metadata.get('score', 0):.2f}")
