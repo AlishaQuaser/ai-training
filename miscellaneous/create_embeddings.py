@@ -3,6 +3,8 @@ from pymongo import MongoClient, UpdateOne
 from dotenv import load_dotenv
 from langchain_mistralai import MistralAIEmbeddings
 
+from langchain_openai import OpenAIEmbeddings
+
 load_dotenv()
 
 def connect_to_mongodb():
@@ -17,15 +19,18 @@ def connect_to_mongodb():
     return db
 
 def setup_embeddings():
-    """Set up Mistral embeddings"""
-    api_key = os.getenv('MISTRAL_API_KEY')
+    """Set up OpenAI embeddings"""
+    api_key = os.getenv('OPENAI_API_KEY')
     if api_key is None:
-        print('You need to set your environment variable MISTRAL_API_KEY')
+        print('You need to set your environment variable OPENAI_API_KEY')
         exit(1)
 
-    embeddings = MistralAIEmbeddings(
-        model="mistral-embed",
-        mistral_api_key=api_key
+    # Import at the top of your file
+
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-3-large",  # or "text-embedding-3-small" for a cheaper option
+        openai_api_key=api_key,
+        dimensions=2048
     )
     return embeddings
 
@@ -33,7 +38,7 @@ def generate_embeddings_for_agencies():
     """Generate and store embeddings for agency representative texts"""
     db = connect_to_mongodb()
 
-    agencies_collection = db["agencies_test_data"]
+    agencies_collection = db["agencies_"]
 
     embeddings_model = setup_embeddings()
 
