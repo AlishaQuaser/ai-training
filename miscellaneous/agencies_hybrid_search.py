@@ -33,7 +33,7 @@ def search_cli():
 
     collection = db["agencies_test_data"]
 
-    metadata_field_names = ["_id", "name", "text", "hourly_rate"]
+    metadata_field_names = ["_id", "name", "text", "hourlyRate"]
 
     vector_store = MongoDBAtlasVectorSearch(
         collection=collection,
