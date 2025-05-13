@@ -1,6 +1,7 @@
 import os
 from pymongo import MongoClient
-from langchain_mistralai import MistralAIEmbeddings
+
+from langchain_openai import OpenAIEmbeddings
 from langchain_mongodb import MongoDBAtlasVectorSearch
 from langchain_mongodb.retrievers.hybrid_search import MongoDBAtlasHybridSearchRetriever
 from dotenv import load_dotenv
@@ -19,26 +20,34 @@ def connect_to_mongodb():
 
 
 def setup_embeddings():
-    api_key = os.getenv("MISTRAL_API_KEY")
-    if not api_key:
-        print("Please set environment variable MISTRAL_API_KEY")
+    """Set up OpenAI embeddings"""
+    api_key = os.getenv('OPENAI_API_KEY')
+    if api_key is None:
+        print('You need to set your environment variable OPENAI_API_KEY')
         exit(1)
 
-    return MistralAIEmbeddings(model="mistral-embed", mistral_api_key=api_key)
+    # Import at the top of your file
+
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-3-large",  # or "text-embedding-3-small" for a cheaper option
+        openai_api_key=api_key,
+        dimensions=2048
+    )
+    return embeddings
 
 
 def search_cli():
     db, client = connect_to_mongodb()
     embeddings = setup_embeddings()
 
-    collection = db["agencies_test_data"]
+    collection = db["agencies_new"]
 
     metadata_field_names = ["_id", "name", "text", "hourlyRate"]
 
     vector_store = MongoDBAtlasVectorSearch(
         collection=collection,
         embedding=embeddings,
-        index_name="default",
+        index_name="agencies_new_search_index",
         text_key="representativeText",
         embedding_key="embedding",
         metadata_field_names=metadata_field_names
@@ -46,8 +55,8 @@ def search_cli():
 
     retriever = MongoDBAtlasHybridSearchRetriever(
         vectorstore=vector_store,
-        search_index_name="default",
-        top_k=5,
+        search_index_name="agencies_new_search_index",
+        top_k=10,
         fulltext_penalty=50,
         vector_penalty=50
     )
