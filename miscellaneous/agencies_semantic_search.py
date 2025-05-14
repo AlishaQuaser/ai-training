@@ -5,9 +5,9 @@ from typing import Dict, List, Any, Tuple
 import re
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from pymongo import MongoClient
+import numpy as np
 
 load_dotenv()
-
 
 class QueryParser:
     """Parse natural language queries into structured filters and semantic search components"""
@@ -50,6 +50,13 @@ class QueryParser:
         
         3. hourlyRate: MEDIUM PRIORITY
            - Parse hourly rate requirements, including currency, operators, and ranges
+           - Include currency specification if mentioned (USD, EUR, GBP, etc.)
+           - IMPORTANT: For single threshold values, prioritize filtering on min values:
+             - "under $100" should be interpreted as hourlyRate: {"min": {"$lt": 100}}
+             - "less than $150" should be interpreted as hourlyRate: {"min": {"$lt": 150}}
+             - "maximum $200" should be interpreted as hourlyRate: {"min": {"$lte": 200}}
+           - For ranges, use both min and max:
+             - "$100-200" should be interpreted as hourlyRate: {"min": {"$gte": 100}, "max": {"$lte": 200}}
         
         4. founded: LOWER PRIORITY
            - Parse founding year requirements if mentioned
@@ -63,9 +70,12 @@ class QueryParser:
         - If text contains any variant of "freelancers", "individuals", "contractors", "lone developer": type = "freelancer" (NEVER match agencies)
         - "200+ members" → teamSize: {"$gt": 200}  (STRICTLY greater than, not greater than or equal)
         - "at least 50 people" → teamSize: {"$gte": 50}
-        - "charging $200-300/hour" → hourlyRate: {"min": {"$lte": 300}, "max": {"$gte": 200}}
+        - "charging $200-300/hour" → hourlyRate: {"min": {"$gte": 200}, "max": {"$lte": 300}}
         - "less than $150 per hour" → hourlyRate: {"min": {"$lt": 150}}
+        - "under $100/hour" → hourlyRate: {"min": {"$lt": 100}}
+        - "maximum $200 hourly" → hourlyRate: {"min": {"$lte": 200}}
         - "founded after 2015" → founded: {"$gt": 2015}
+        - "hourly rate in EUR" → hourlyRate: {"currency": "EUR"}
         
         Your response should be a valid JSON object with no additional text.
         """
@@ -98,10 +108,11 @@ class QueryParser:
             return {}, query
 
 
-class MongoDBAtlasVectorSearch:
+class DirectMongoSemanticSearch:
     """
-    MongoDB Atlas Vector Search implementation using an existing search index
-    - Uses Atlas Vector Search with $vectorSearch operator
+    Direct MongoDB query with semantic search applied to filtered results
+    - First applies MongoDB query filters
+    - Then applies semantic search to the filtered documents
     """
 
     def __init__(self):
@@ -112,8 +123,6 @@ class MongoDBAtlasVectorSearch:
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client["hiretalentt"]
         self.collection = self.db["agencies_new"]
-
-        self.vector_index_name = "agencies_search_index"
 
         self.api_key = os.getenv('OPENAI_API_KEY')
         if self.api_key is None:
@@ -126,25 +135,26 @@ class MongoDBAtlasVectorSearch:
         )
 
         self.query_parser = QueryParser()
+        self.metadata_field_names = ["_id", "name", "hourlyRate", "teamSize", "type", "founded", "representativeText"]
 
-    def _transform_filters_for_vectorsearch(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+    def _transform_filters_for_mongodb(self, filters: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Transform parsed filters into MongoDB $vectorSearch filter format
+        Transform parsed filters into MongoDB query format
 
         Args:
             filters: The filters dictionary from the query parser
 
         Returns:
-            MongoDB $vectorSearch compatible filter
+            MongoDB-compatible query filter
         """
-        vectorsearch_filters = {}
+        mongodb_filters = {}
 
         if "type" in filters:
-            vectorsearch_filters["type"] = filters["type"]
+            mongodb_filters["type"] = filters["type"]
             print(f"Strictly filtering by type: {filters['type']}")
 
         if "teamSize" in filters:
-            vectorsearch_filters["teamSize"] = filters["teamSize"]
+            mongodb_filters["teamSize"] = filters["teamSize"]
             if "$gt" in filters["teamSize"]:
                 print(f"Filtering by team size > {filters['teamSize']['$gt']}")
             elif "$gte" in filters["teamSize"]:
@@ -159,16 +169,28 @@ class MongoDBAtlasVectorSearch:
 
             if "min" in hourly_rate_filter:
                 for op, value in hourly_rate_filter["min"].items():
-                    vectorsearch_filters["hourlyRate.min"] = {op: value}
-                    print(f"Filtering by hourly rate minimum {op} {value}")
+                    if op in ["$lt", "$lte"]:
+                        mongodb_filters["hourlyRate.min"] = {op: value}
+                        print(f"Filtering by hourly rate minimum {op} {value}")
+                    else:
+                        mongodb_filters["hourlyRate.min"] = {op: value}
+                        print(f"Filtering by hourly rate minimum {op} {value}")
 
             if "max" in hourly_rate_filter:
                 for op, value in hourly_rate_filter["max"].items():
-                    vectorsearch_filters["hourlyRate.max"] = {op: value}
-                    print(f"Filtering by hourly rate maximum {op} {value}")
+                    if op in ["$gt", "$gte"]:
+                        mongodb_filters["hourlyRate.max"] = {op: value}
+                        print(f"Filtering by hourly rate maximum {op} {value}")
+                    else:
+                        mongodb_filters["hourlyRate.max"] = {op: value}
+                        print(f"Filtering by hourly rate maximum {op} {value}")
+
+            if "currency" in hourly_rate_filter:
+                mongodb_filters["hourlyRate.currency"] = hourly_rate_filter["currency"]
+                print(f"Filtering by hourly rate currency: {hourly_rate_filter['currency']}")
 
         if "founded" in filters:
-            vectorsearch_filters["founded"] = filters["founded"]
+            mongodb_filters["founded"] = filters["founded"]
             if "$gt" in filters["founded"]:
                 print(f"Filtering by founded > {filters['founded']['$gt']}")
             elif "$gte" in filters["founded"]:
@@ -178,99 +200,77 @@ class MongoDBAtlasVectorSearch:
             elif "$lte" in filters["founded"]:
                 print(f"Filtering by founded <= {filters['founded']['$lte']}")
 
-        return vectorsearch_filters
+        return mongodb_filters
 
-    def search(
-            self,
-            query: str,
-            page: int = 1,
-            page_size: int = 10,
-            num_candidates: int = 10000,
-            max_results: int = 10000
-    ) -> Dict[str, Any]:
+
+    def _calculate_semantic_similarity(self, query_embedding, document_embedding):
         """
-        Perform vector search using MongoDB Atlas $vectorSearch operator
+        Calculate cosine similarity between query embedding and document embedding
+
+        Args:
+            query_embedding: The embedding vector of the query
+            document_embedding: The embedding vector of the document
+
+        Returns:
+            Cosine similarity score (higher means more similar)
+        """
+        if isinstance(query_embedding, list):
+            query_embedding = np.array(query_embedding)
+        if isinstance(document_embedding, list):
+            document_embedding = np.array(document_embedding)
+
+        dot_product = np.dot(query_embedding, document_embedding)
+        query_norm = np.linalg.norm(query_embedding)
+        doc_norm = np.linalg.norm(document_embedding)
+
+        if query_norm == 0 or doc_norm == 0:
+            return 0.0
+
+        similarity = dot_product / (query_norm * doc_norm)
+        return float(similarity)
+
+    def search(self, query: str, k: int = 5, max_filter_results: int = 100) -> List[Dict[str, Any]]:
+        """
+        Perform direct MongoDB query followed by semantic search
 
         Args:
             query: Natural language query string
-            page: Current page number (1-indexed)
-            page_size: Number of results per page
-            num_candidates: Number of candidates to consider for scoring
-            max_results: Maximum number of results to retrieve (MongoDB requires a limit)
+            k: Number of final results to return
+            max_filter_results: Maximum number of documents to retrieve from MongoDB
 
         Returns:
-            Dictionary containing search results, pagination info, and metadata
+            List of search results with scores
         """
         filters, semantic_query = self.query_parser.parse_query(query)
         print(f"Extracted filters: {json.dumps(filters, indent=2)}")
         print(f"Semantic query: {semantic_query}")
 
-        vectorsearch_filters = self._transform_filters_for_vectorsearch(filters)
-        print(f"Vector search filters: {json.dumps(vectorsearch_filters, indent=2)}")
+        mongodb_filters = self._transform_filters_for_mongodb(filters)
+        print(f"MongoDB filters: {json.dumps(mongodb_filters, indent=2)}")
 
         try:
+            print(f"Executing direct MongoDB query with filters...")
+            cursor = self.collection.find(mongodb_filters).limit(max_filter_results)
+            filtered_docs = list(cursor)
+            filtered_count = len(filtered_docs)
+            print(f"Retrieved {filtered_count} documents from MongoDB")
+
+            if not filtered_docs:
+                print("No documents matched the filters")
+                return []
+
+            if filtered_count <= k:
+                print(f"Warning: Only {filtered_count} documents matched filters (less than requested {k} results)")
+            else:
+                print(f"Performing semantic search on {filtered_count} filtered documents")
+
             print(f"Generating embedding for semantic query: '{semantic_query}'")
             query_embedding = self.embeddings.embed_query(semantic_query)
 
-            pipeline = [
-                {
-                    "$vectorSearch": {
-                        "index": self.vector_index_name,
-                        "path": "embedding",
-                        "queryVector": query_embedding,
-                        "numCandidates": num_candidates,
-                        "limit": max_results
-                    }
-                }
-            ]
-
-            if vectorsearch_filters:
-                pipeline[0]["$vectorSearch"]["filter"] = vectorsearch_filters
-
-            pipeline.append({
-                "$project": {
-                    "_id": 1,
-                    "name": 1,
-                    "hourlyRate": 1,
-                    "teamSize": 1,
-                    "type": 1,
-                    "founded": 1,
-                    "representativeText": 1,
-                    "score": {"$meta": "vectorSearchScore"}
-                }
-            })
-
-            total_count = len(list(self.collection.aggregate(pipeline)))
-            print(f"Documents matching both filters and semantic search: {total_count}")
-
-            count_pipeline = pipeline.copy()
-            count_pipeline.append({"$count": "total"})
-            count_result = list(self.collection.aggregate(count_pipeline))
-            total_count = count_result[0]["total"] if count_result else 0
-            print(f"Documents matching both filters and semantic search: {total_count}")
-
-            pagination_pipeline = pipeline.copy()
-            pagination_pipeline.append({"$skip": (page - 1) * page_size})
-            pagination_pipeline.append({"$limit": page_size})
-
-            search_results = list(self.collection.aggregate(pagination_pipeline))
-
-            if not search_results:
-                print("No results found matching the query")
-                return {
-                    "results": [],
-                    "pagination": {
-                        "total": 0,
-                        "pages": 0,
-                        "current_page": page,
-                        "page_size": page_size
-                    },
-                    "filters_applied": bool(vectorsearch_filters),
-                    "semantic_query": semantic_query
-                }
-
             results_with_scores = []
-            for doc in search_results:
+            for doc in filtered_docs:
+                similarity_score = self._calculate_semantic_similarity(query_embedding, doc['embedding'])
+
                 hourly_rate = doc.get('hourlyRate', {})
                 if isinstance(hourly_rate, dict):
                     hourly_rate_str = f"{hourly_rate.get('min', 'N/A')}-{hourly_rate.get('max', 'N/A')} {hourly_rate.get('currency', 'USD')}"
@@ -284,86 +284,25 @@ class MongoDBAtlasVectorSearch:
                     "team_size": doc.get('teamSize', 'N/A'),
                     "type": doc.get('type', 'N/A'),
                     "founded": doc.get('founded', 'N/A'),
-                    "content": doc.get('representativeText', '')[:200] + "..." if doc.get('representativeText') else "",
-                    "similarity_score": doc.get('score', 0)
+                    "content": doc.get('representativeText', ''),
+                    "similarity_score": similarity_score
                 }
+
                 results_with_scores.append(result)
 
-            print(f"Retrieved {len(results_with_scores)} results")
+            results_with_scores.sort(key=lambda x: x['similarity_score'], reverse=True)
 
-            return {
-                "results": results_with_scores,
-                "pagination": {
-                    "total": total_count,
-                    "pages": (total_count + page_size - 1) // page_size,
-                    "current_page": page,
-                    "page_size": page_size
-                },
-                "filters_applied": bool(vectorsearch_filters),
-                "semantic_query": semantic_query
-            }
+            final_result_count = min(k, len(results_with_scores))
+            print(f"Returning top {final_result_count} results")
+            return results_with_scores[:final_result_count]
 
         except Exception as e:
             print(f"Error during search: {e}")
-            return {
-                "results": [],
-                "pagination": {
-                    "total": 0,
-                    "pages": 0,
-                    "current_page": page,
-                    "page_size": page_size
-                },
-                "error": str(e)
-            }
-
-    def ensure_embeddings(self, max_docs=100, batch_size=10):
-        """
-        Ensure all documents have embeddings by generating them for documents that don't
-
-        Args:
-            max_docs: Maximum number of documents to process
-            batch_size: Number of documents to embed in a single batch
-        """
-        try:
-            query = {"embedding": {"$exists": False}}
-            docs_without_embeddings = list(self.collection.find(query).limit(max_docs))
-
-            if not docs_without_embeddings:
-                print("All documents already have embeddings")
-                return
-
-            total_docs = len(docs_without_embeddings)
-            print(f"Found {total_docs} documents without embeddings")
-
-            for i in range(0, total_docs, batch_size):
-                batch = docs_without_embeddings[i:i+batch_size]
-                batch_updates = []
-
-                for doc in batch:
-                    if 'representativeText' in doc and doc['representativeText']:
-                        print(f"Generating embedding for document: {doc.get('name', 'Unknown')}")
-                        embedding = self.embeddings.embed_query(doc['representativeText'])
-
-                        batch_updates.append({
-                            "filter": {"_id": doc["_id"]},
-                            "update": {"$set": {"embedding": embedding}}
-                        })
-                    else:
-                        print(f"Skipping document with no text to embed: {doc.get('name', 'Unknown')}")
-
-                if batch_updates:
-                    for update in batch_updates:
-                        self.collection.update_one(
-                            update["filter"],
-                            update["update"]
-                        )
-
-                print(f"Processed batch {i//batch_size + 1}/{(total_docs + batch_size - 1)//batch_size}")
-
-            print("Finished generating embeddings")
+            return []
 
         except Exception as e:
-            print(f"Error ensuring embeddings: {e}")
+            print(f"Error during search: {e}")
+            return []
 
     def close(self):
         """Close the MongoDB connection"""
@@ -372,12 +311,9 @@ class MongoDBAtlasVectorSearch:
 
 
 def main():
-    search_engine = MongoDBAtlasVectorSearch()
+    search_engine = DirectMongoSemanticSearch()
 
-    print("\n=== Ensuring all documents have embeddings ===")
-    search_engine.ensure_embeddings()
-
-    print("\n=== MongoDB Atlas Vector Search ===")
+    print("\n=== Direct MongoDB Query with Semantic Search ===")
     print("Type 'quit' to exit")
 
     try:
@@ -387,27 +323,10 @@ def main():
                 break
 
             print("\nProcessing query...")
-            page = 1
-            page_size = 10
-
-            search_response = search_engine.search(
-                query=query,
-                page=page,
-                page_size=page_size,
-                num_candidates=10000,
-                max_results=10000
-            )
-
-            results = search_response.get("results", [])
-            pagination = search_response.get("pagination", {})
+            results = search_engine.search(query, k=5)
 
             if results:
-                print(f"\n=== Search Results (Page {page} of {pagination.get('pages', 1)}) ===")
-                print(f"Total results: {pagination.get('total', 0)}")
-
-                if search_response.get("filters_applied"):
-                    print(f"Applied filters with semantic query: '{search_response.get('semantic_query', '')}'")
-
+                print("\n=== Search Results ===")
                 for i, result in enumerate(results):
                     print(f"\n--- Result {i+1} (Similarity Score: {result['similarity_score']:.4f}) ---")
                     print(f"ID: {result['id']}")
@@ -416,7 +335,7 @@ def main():
                     print(f"Team Size: {result['team_size']}")
                     print(f"Hourly Rate: {result['hourly_rate']}")
                     print(f"Founded: {result['founded']}")
-                    print(f"Content: {result['content']}")
+                    print(f"Content: {result['content']}...")
             else:
                 print("No results found.")
     finally:
