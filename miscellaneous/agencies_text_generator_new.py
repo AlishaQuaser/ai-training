@@ -37,7 +37,7 @@ class AgencyGenerator:
             'Angular', 'Vue.js', 'TensorFlow', 'PyTorch', 'Kubernetes',
             'Express.js', 'Laravel', 'Ruby on Rails', 'FastAPI',
             'Phoenix', 'Svelte', 'Next.js', 'Nuxt.js', 'Gatsby',
-            'Electron', 'React Native', 'Xamarin', 'Qt'
+            'Electron', 'React Native', 'Xamarin', 'Qt', 'PrimeNG'
         ]
 
         self.cloud_platforms = [
@@ -107,30 +107,15 @@ class AgencyGenerator:
     def generate_tech_stack(self, is_agency=True):
         """Generate a realistic tech stack."""
         if is_agency:
+            tech_count = random.randint(3, 8)
             all_techs = (
                     self.programming_languages +
                     self.frameworks_libraries +
                     self.cloud_platforms +
-                    self.databases +
-                    [
-                        'GraphQL', 'gRPC', 'WebAssembly', 'Terraform',
-                        'Ansible', 'Docker', 'Nginx', 'Apache',
-                        'Kafka', 'RabbitMQ', 'Redis Cluster', 'Elasticsearch',
-                        'Prometheus', 'Grafana', 'Jenkins', 'GitLab CI/CD',
-                        'Kubernetes', 'OpenShift', 'ArgoCD', 'Istio',
-                        'TensorFlow', 'PyTorch', 'Keras', 'Scikit-learn',
-                        'CUDA', 'OpenCL', 'Metal', 'DirectX',
-                        'OpenGL', 'Vulkan', 'WebRTC', 'WASM',
-                        'CoreML', 'ONNX', 'MXNet', 'Caffe',
-                        'Xamarin', 'Ionic', 'PhoneGap', 'Unity',
-                        'Unreal Engine', 'Godot', 'Blender', 'Maya'
-                    ]
+                    self.databases
             )
-
-            if len(all_techs) < 50:
-                raise ValueError("Not enough unique technologies to generate 50 skills")
-
-            tech_stack = random.sample(all_techs, min(50, len(all_techs)))
+            tech_count = min(tech_count, len(all_techs))
+            tech_stack = random.sample(all_techs, tech_count)
         else:
             tech_count = random.randint(3, 6)
             all_techs = (
@@ -144,30 +129,12 @@ class AgencyGenerator:
 
         return tech_stack
 
-    def generate_project_details(self):
-        """Generate project details with domain, technologies, and case study style."""
-        detailed_domains = [
-            'Financial Sector Digital Transformation',
-            'Healthcare Technology Innovation',
-            'E-commerce Platform Development',
-            'Educational Technology Solutions',
-            'Logistics and Supply Chain Optimization',
-            'Media and Content Streaming Platforms',
-            'Telecommunications Infrastructure',
-            'Manufacturing Process Automation',
-            'Gaming and Interactive Entertainment',
-            'Retail Technology Modernization',
-            'Travel and Hospitality Tech',
-            'Real Estate Technology',
-            'Agricultural Technology Solutions',
-            'Renewable Energy Management Systems',
-            'Cybersecurity and Threat Detection',
-            'Smart City Infrastructure',
-            'IoT and Embedded Systems'
-        ]
+    def generate_project_domain(self):
+        """Generate a project domain."""
+        return random.choice(self.industry_domains)
 
-        domain = random.choice(detailed_domains)
-
+    def generate_project_technologies(self):
+        """Generate technologies used for a project."""
         all_techs = (
                 self.programming_languages +
                 self.frameworks_libraries +
@@ -175,82 +142,50 @@ class AgencyGenerator:
                 self.databases
         )
 
-        project_name = f"Case Study: {domain}"
-
-        tech_count = random.randint(2, 6)
+        tech_count = random.randint(2, 5)
         tech_count = min(tech_count, len(all_techs))
         project_techs = random.sample(all_techs, tech_count)
 
-        return project_name, domain, project_techs
+        return project_techs
 
     def generate_representative_text(self, is_agency=True, agency_details=None):
-        """Generate comprehensive representative text."""
-        if is_agency:
-            if agency_details:
-                name = agency_details.get('name', 'Unknown Agency')
-                team_size = random.randint(15, 250)
-                founded_year = agency_details.get('founded', random.randint(2010, 2023))
-            else:
-                name = self.generate_agency_name()
-                team_size = random.randint(15, 250)
-                founded_year = random.randint(2010, 2023)
+        """Generate representative text following the specified format."""
+        if agency_details and 'name' in agency_details:
+            name = agency_details.get('name', 'Unknown Agency')
+        elif is_agency:
+            name = self.generate_agency_name()
         else:
             name = self.generate_freelancer_name()
-            team_size = 1
-            founded_year = random.randint(2010, 2023)
+
+        entity_type = "agency" if is_agency else "freelancer"
 
         tech_stack = self.generate_tech_stack(is_agency)
 
-        num_projects = random.randint(7, 10) if is_agency else random.randint(1, 3)
-        projects = []
+        num_domains = random.randint(7, 10) if is_agency else random.randint(3, 5)
+        project_domains = []
 
-        for _ in range(num_projects):
-            project_name, domain, project_techs = self.generate_project_details()
-            projects.append({
-                'name': project_name,
-                'domain': domain,
-                'technologies': project_techs
-            })
+        available_domains = self.industry_domains.copy()
+        for _ in range(min(num_domains, len(available_domains))):
+            if not available_domains:
+                break
 
-        if is_agency:
-            rep_text = f"{name} is an agency with the following skill sets: {', '.join(tech_stack)}. "
+            domain = random.choice(available_domains)
+            available_domains.remove(domain)
+            project_techs = self.generate_project_technologies()
+            project_domains.append((domain, project_techs))
 
-            domain_projects = {}
-            for proj in projects:
-                if proj['domain'] not in domain_projects:
-                    domain_projects[proj['domain']] = []
-                domain_projects[proj['domain']].append(proj)
+        rep_text = f"{name} is an {entity_type} with following skill set {', '.join(tech_stack)}"
 
-            project_descriptions = []
-            for domain, domain_projs in domain_projects.items():
-                domain_techs = set()
-                for proj in domain_projs:
-                    domain_techs.update(proj['technologies'])
+        if project_domains:
+            first_domain, first_techs = project_domains[0]
+            domain_text = f" have done projects on {first_domain} using {', '.join(first_techs)}"
 
-                domain_proj_names = [proj['name'] for proj in domain_projs]
-                domain_desc = f"have done projects on {domain} using {', '.join(domain_techs)}"
-                project_descriptions.append(domain_desc)
+            for domain, techs in project_domains[1:]:
+                domain_text += f" ; {domain} using {', '.join(techs)}"
 
-            rep_text += " ".join(project_descriptions) + "."
-        else:
-            rep_text = f"{name} is a freelancer with the following skill set: {', '.join(tech_stack)}. "
+            rep_text += domain_text
 
-            project_descriptions = []
-            for proj in projects:
-                proj_desc = f"Worked on {proj['name']} in {proj['domain']} "
-                proj_desc += f"using {', '.join(proj['technologies'])}"
-                project_descriptions.append(proj_desc)
-
-            rep_text += "Worked on following projects: " + ". ".join(project_descriptions) + "."
-
-        return {
-            'name': name,
-            'is_agency': is_agency,
-            'team_size': team_size,
-            'tech_stack': tech_stack,
-            'projects': projects,
-            'operational_year': founded_year
-        }, rep_text
+        return rep_text
 
     def generate_agencies_and_freelancers(self, num_agencies=500, num_freelancers=50):
         """Generate a list of agency and freelancer documents."""
@@ -259,47 +194,44 @@ class AgencyGenerator:
         for i in range(num_agencies):
             agency_details = self.loaded_agencies[i] if i < len(self.loaded_agencies) else None
 
-            details, rep_text = self.generate_representative_text(is_agency=True, agency_details=agency_details)
+            rep_text = self.generate_representative_text(is_agency=True, agency_details=agency_details)
 
-            if agency_details and 'hourlyRate' in agency_details:
-                hourly_rate = agency_details['hourlyRate']
-            else:
-                hourly_rate = {
-                    "min": random.randint(20, 50),
-                    "max": random.randint(70, 150),
-                    "currency": "USD"
-                }
+            name = rep_text.split(" is an agency")[0] if " is an agency" in rep_text else agency_details.get('name', self.generate_agency_name())
 
             doc = {
                 "_id": {
                     "$oid": agency_details.get('_id', {}).get('$oid', self.generate_object_id()) if agency_details else self.generate_object_id()
                 },
-                "name": details["name"],
-                "hourlyRate": hourly_rate,
+                "name": name,
+                "hourlyRate": agency_details.get('hourlyRate', {
+                    "min": random.randint(20, 50),
+                    "max": random.randint(70, 150),
+                    "currency": "USD"
+                }),
                 "representativeText": rep_text,
-                "teamSize": details["team_size"],
                 "type": "agency",
-                "founded": details["operational_year"]
+                "founded": agency_details.get('founded', random.randint(2010, 2023))
             }
             documents.append(doc)
 
         for _ in range(num_freelancers):
-            details, rep_text = self.generate_representative_text(is_agency=False)
+            rep_text = self.generate_representative_text(is_agency=False)
+
+            name = rep_text.split(" is a freelancer")[0] if " is a freelancer" in rep_text else self.generate_freelancer_name()
 
             doc = {
                 "_id": {
                     "$oid": self.generate_object_id()
                 },
-                "name": details["name"],
+                "name": name,
                 "hourlyRate": {
                     "min": random.randint(50, 80),
                     "max": random.randint(100, 200),
                     "currency": "USD"
                 },
                 "representativeText": rep_text,
-                "teamSize": 1,
                 "type": "freelancer",
-                "founded": details["operational_year"]
+                "founded": random.randint(2010, 2023)
             }
             documents.append(doc)
 
@@ -308,6 +240,8 @@ class AgencyGenerator:
 class DocumentProcessor:
     def __init__(self, input_file):
         self.input_file = input_file
+
+        self.generator = AgencyGenerator()
 
     def load_documents(self):
         """Load documents from the input file."""
@@ -319,48 +253,18 @@ class DocumentProcessor:
             return []
 
     def process_documents(self):
-        """Process documents to add new fields and remove info from representativeText."""
+        """Process documents to update the representativeText field only."""
         documents = self.load_documents()
         processed_docs = []
 
         for doc in documents:
-            rep_text = doc.get("representativeText", "")
+            processed_doc = doc.copy()
 
-            is_agency = "is an agency" in rep_text.lower()
-            doc_type = "agency" if is_agency else "freelancer"
+            is_agency = doc.get("type", "agency") == "agency"
+            rep_text = self.generator.generate_representative_text(is_agency=is_agency, agency_details=doc)
+            processed_doc["representativeText"] = rep_text
 
-
-            team_size = 1
-            if is_agency:
-                team_size_match = re.search(r"has (\d+) team members", rep_text)
-                if team_size_match:
-                    team_size = int(team_size_match.group(1))
-
-
-            founded_year = None
-            year_match = re.search(r"operational since (\d{4})", rep_text)
-            if year_match:
-                founded_year = int(year_match.group(1))
-
-            new_rep_text = re.sub(r"has \d+ team members", "", rep_text)
-            new_rep_text = re.sub(r"operational since \d{4}", "", new_rep_text)
-            new_rep_text = re.sub(r"\s+\.", ".", new_rep_text)
-            new_rep_text = re.sub(r"\s{2,}", " ", new_rep_text)
-            new_rep_text = new_rep_text.strip()
-
-            if is_agency:
-                new_rep_text = re.sub(r"is an agency that", "is an agency", new_rep_text)
-            else:
-                new_rep_text = re.sub(r"is a freelancer who", "is a freelancer", new_rep_text)
-
-            doc["teamSize"] = team_size
-            doc["type"] = doc_type
-
-            if founded_year:
-                doc["founded"] = founded_year
-
-            doc["representativeText"] = new_rep_text
-            processed_docs.append(doc)
+            processed_docs.append(processed_doc)
 
         return processed_docs
 
@@ -386,7 +290,7 @@ def main():
     try:
         print("Choose an option:")
         print("1. Generate new agency and freelancer documents")
-        print("2. Process existing documents to add fields and update representativeText")
+        print("2. Process existing documents to update representativeText")
         choice = input("Enter your choice (1 or 2): ").strip()
 
         if choice == "1":
