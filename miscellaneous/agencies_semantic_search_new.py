@@ -197,13 +197,11 @@ class DirectMongoSemanticSearch:
         for result in results:
             matches_all_filters = True
 
-            # Check type filter (HIGHEST PRIORITY)
             if "type" in filters and result["type"] != filters["type"]:
-                print(f"Rejected result {result['name']} - type mismatch: {result['type']} ≠ {filters['type']}")
+                # print(f"Rejected result {result['name']} - type mismatch: {result['type']} ≠ {filters['type']}")
                 matches_all_filters = False
-                continue  # Skip immediately if type doesn't match
+                continue
 
-            # Check teamSize filters
             if "teamSize" in filters:
                 team_size = result["team_size"]
                 try:
@@ -218,13 +216,8 @@ class DirectMongoSemanticSearch:
                     elif "$lte" in filters["teamSize"] and not team_size <= filters["teamSize"]["$lte"]:
                         matches_all_filters = False
                 except (ValueError, TypeError):
-                    # If we can't parse the team size, be conservative and exclude the result
                     matches_all_filters = False
 
-            # Check hourly rate filters (more complex, would need to parse the rate range)
-            # Skipping detailed implementation to keep this example focused
-
-            # Check founded year
             if "founded" in filters:
                 founded = result["founded"]
                 try:
@@ -239,7 +232,6 @@ class DirectMongoSemanticSearch:
                     elif "$lte" in filters["founded"] and not founded <= filters["founded"]["$lte"]:
                         matches_all_filters = False
                 except (ValueError, TypeError):
-                    # If we can't parse the founded year, be conservative and exclude the result
                     matches_all_filters = False
 
             if matches_all_filters:
@@ -260,13 +252,11 @@ class DirectMongoSemanticSearch:
         Returns:
             Cosine similarity score (higher means more similar)
         """
-        # Ensure embeddings are numpy arrays
         if isinstance(query_embedding, list):
             query_embedding = np.array(query_embedding)
         if isinstance(document_embedding, list):
             document_embedding = np.array(document_embedding)
 
-        # Calculate cosine similarity
         dot_product = np.dot(query_embedding, document_embedding)
         query_norm = np.linalg.norm(query_embedding)
         doc_norm = np.linalg.norm(document_embedding)
@@ -298,35 +288,42 @@ class DirectMongoSemanticSearch:
 
         try:
             print(f"Executing direct MongoDB query with filters...")
-            # 1. DIRECT MONGO QUERY: Get filtered documents from MongoDB
             cursor = self.collection.find(mongodb_filters).limit(max_filter_results)
             filtered_docs = list(cursor)
-            print(f"Retrieved {len(filtered_docs)} documents from MongoDB")
+            filtered_count = len(filtered_docs)
+            print(f"Retrieved {filtered_count} documents from MongoDB")
 
             if not filtered_docs:
                 print("No documents matched the filters")
                 return []
 
-            # 2. SEMANTIC SEARCH: Generate embedding for the semantic query
+            if filtered_count <= k:
+                print(f"Warning: Only {filtered_count} documents matched filters (less than requested {k} results)")
+            else:
+                print(f"Performing semantic search on {filtered_count} filtered documents")
+
             print(f"Generating embedding for semantic query: '{semantic_query}'")
             query_embedding = self.embeddings.embed_query(semantic_query)
 
-            # 3. Score documents by semantic similarity
             results_with_scores = []
+            docs_with_embeddings = 0
             for doc in filtered_docs:
-                # If document has no embedding, generate one
                 if 'embedding' not in doc or not doc['embedding']:
                     if 'representativeText' in doc and doc['representativeText']:
                         print(f"Generating embedding for document: {doc.get('name', 'Unknown')}")
                         doc['embedding'] = self.embeddings.embed_query(doc['representativeText'])
+                        self.collection.update_one(
+                            {"_id": doc["_id"]},
+                            {"$set": {"embedding": doc['embedding']}}
+                        )
                     else:
-                        # Skip documents with no text to embed
+                        print(f"Skipping document with no text to embed: {doc.get('name', 'Unknown')}")
                         continue
 
-                # Calculate similarity between query and document
+                docs_with_embeddings += 1
+
                 similarity_score = self._calculate_semantic_similarity(query_embedding, doc['embedding'])
 
-                # Format result
                 hourly_rate = doc.get('hourlyRate', {})
                 if isinstance(hourly_rate, dict):
                     hourly_rate_str = f"{hourly_rate.get('min', 'N/A')}-{hourly_rate.get('max', 'N/A')} {hourly_rate.get('currency', 'USD')}"
@@ -346,14 +343,17 @@ class DirectMongoSemanticSearch:
 
                 results_with_scores.append(result)
 
-            # 4. Sort by similarity score
+            if docs_with_embeddings < filtered_count:
+                print(f"Warning: {filtered_count - docs_with_embeddings} documents were skipped due to missing text")
+
             results_with_scores.sort(key=lambda x: x['similarity_score'], reverse=True)
 
-            # 5. Double-check filters (just to be safe)
             verified_results = self._verify_results_match_filters(results_with_scores, mongodb_filters)
+            print(f"Verified {len(verified_results)} results match all filters after semantic scoring")
 
-            # Return top k results
-            return verified_results[:k]
+            final_result_count = min(k, len(verified_results))
+            print(f"Returning top {final_result_count} results")
+            return verified_results[:final_result_count]
 
         except Exception as e:
             print(f"Error during search: {e}")
@@ -370,8 +370,6 @@ def main():
 
     print("\n=== Direct MongoDB Query with Semantic Search ===")
     print("Type 'quit' to exit")
-    print("\nThis system first applies MongoDB filters directly to the collection")
-    print("Then applies semantic search to the filtered results")
 
     try:
         while True:
@@ -397,7 +395,6 @@ def main():
                 print("No results found.")
     finally:
         search_engine.close()
-        print("\nThank you for using Direct MongoDB Query with Semantic Search. Goodbye!")
 
 
 if __name__ == "__main__":
