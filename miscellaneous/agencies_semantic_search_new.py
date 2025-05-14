@@ -112,7 +112,7 @@ class DirectMongoSemanticSearch:
 
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client["hiretalentt"]
-        self.collection = self.db["agencies_"]
+        self.collection = self.db["agencies_new"]
 
         self.api_key = os.getenv('OPENAI_API_KEY')
         if self.api_key is None:
