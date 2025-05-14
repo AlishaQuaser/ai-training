@@ -4,8 +4,8 @@ import os
 from typing import Dict, List, Any, Tuple
 import re
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_mongodb import MongoDBAtlasVectorSearch
 from pymongo import MongoClient
+import numpy as np
 
 load_dotenv()
 
@@ -98,8 +98,12 @@ class QueryParser:
             return {}, query
 
 
-class HybridSearchSystem:
-    """Hybrid search system combining structured filters and semantic search"""
+class DirectMongoSemanticSearch:
+    """
+    Direct MongoDB query with semantic search applied to filtered results
+    - First applies MongoDB query filters
+    - Then applies semantic search to the filtered documents
+    """
 
     def __init__(self):
         self.mongo_uri = os.getenv("MONGO_URI")
@@ -121,31 +125,7 @@ class HybridSearchSystem:
         )
 
         self.query_parser = QueryParser()
-
         self.metadata_field_names = ["_id", "name", "hourlyRate", "teamSize", "type", "founded", "representativeText"]
-
-
-    def _setup_vector_store(self, pre_filter):
-        """
-        Set up vector store with pre-filter for MongoDB Atlas Vector Search
-
-        Args:
-            pre_filter: MongoDB query filter to apply before semantic search
-
-        Returns:
-            Configured vector store
-        """
-        vector_store = MongoDBAtlasVectorSearch(
-            collection=self.collection,
-            embedding=self.embeddings,
-            index_name="vector_index",
-            text_key="representativeText",
-            embedding_key="embedding",
-            metadata_field_names=self.metadata_field_names,
-            pre_filter=pre_filter
-        )
-
-        return vector_store
 
     def _transform_filters_for_mongodb(self, filters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -269,13 +249,42 @@ class HybridSearchSystem:
 
         return verified_results
 
-    def search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
+    def _calculate_semantic_similarity(self, query_embedding, document_embedding):
         """
-        Perform hybrid search on the collection
+        Calculate cosine similarity between query embedding and document embedding
+
+        Args:
+            query_embedding: The embedding vector of the query
+            document_embedding: The embedding vector of the document
+
+        Returns:
+            Cosine similarity score (higher means more similar)
+        """
+        # Ensure embeddings are numpy arrays
+        if isinstance(query_embedding, list):
+            query_embedding = np.array(query_embedding)
+        if isinstance(document_embedding, list):
+            document_embedding = np.array(document_embedding)
+
+        # Calculate cosine similarity
+        dot_product = np.dot(query_embedding, document_embedding)
+        query_norm = np.linalg.norm(query_embedding)
+        doc_norm = np.linalg.norm(document_embedding)
+
+        if query_norm == 0 or doc_norm == 0:
+            return 0.0
+
+        similarity = dot_product / (query_norm * doc_norm)
+        return float(similarity)
+
+    def search(self, query: str, k: int = 5, max_filter_results: int = 100) -> List[Dict[str, Any]]:
+        """
+        Perform direct MongoDB query followed by semantic search
 
         Args:
             query: Natural language query string
-            k: Number of results to return
+            k: Number of final results to return
+            max_filter_results: Maximum number of documents to retrieve from MongoDB
 
         Returns:
             List of search results with scores
@@ -287,79 +296,68 @@ class HybridSearchSystem:
         mongodb_filters = self._transform_filters_for_mongodb(filters)
         print(f"MongoDB filters: {json.dumps(mongodb_filters, indent=2)}")
 
-        # If we need more results than k to account for post-filtering, adjust here
-        fetch_k = k * 3  # Fetch more results than needed in case some get filtered out
-
         try:
-            vector_store = self._setup_vector_store(mongodb_filters)
+            print(f"Executing direct MongoDB query with filters...")
+            # 1. DIRECT MONGO QUERY: Get filtered documents from MongoDB
+            cursor = self.collection.find(mongodb_filters).limit(max_filter_results)
+            filtered_docs = list(cursor)
+            print(f"Retrieved {len(filtered_docs)} documents from MongoDB")
 
-            initial_results = vector_store.similarity_search_with_score(semantic_query, k=fetch_k)
+            if not filtered_docs:
+                print("No documents matched the filters")
+                return []
 
-            formatted_results = []
-            for doc, score in initial_results:
-                metadata = doc.metadata
+            # 2. SEMANTIC SEARCH: Generate embedding for the semantic query
+            print(f"Generating embedding for semantic query: '{semantic_query}'")
+            query_embedding = self.embeddings.embed_query(semantic_query)
 
-                hourly_rate = metadata.get('hourlyRate', {})
+            # 3. Score documents by semantic similarity
+            results_with_scores = []
+            for doc in filtered_docs:
+                # If document has no embedding, generate one
+                if 'embedding' not in doc or not doc['embedding']:
+                    if 'representativeText' in doc and doc['representativeText']:
+                        print(f"Generating embedding for document: {doc.get('name', 'Unknown')}")
+                        doc['embedding'] = self.embeddings.embed_query(doc['representativeText'])
+                    else:
+                        # Skip documents with no text to embed
+                        continue
+
+                # Calculate similarity between query and document
+                similarity_score = self._calculate_semantic_similarity(query_embedding, doc['embedding'])
+
+                # Format result
+                hourly_rate = doc.get('hourlyRate', {})
                 if isinstance(hourly_rate, dict):
                     hourly_rate_str = f"{hourly_rate.get('min', 'N/A')}-{hourly_rate.get('max', 'N/A')} {hourly_rate.get('currency', 'USD')}"
                 else:
                     hourly_rate_str = str(hourly_rate)
 
                 result = {
-                    "id": str(metadata.get('_id', 'Unknown ID')),
-                    "name": metadata.get('name', 'Unknown Name'),
+                    "id": str(doc.get('_id', 'Unknown ID')),
+                    "name": doc.get('name', 'Unknown Name'),
                     "hourly_rate": hourly_rate_str,
-                    "team_size": metadata.get('teamSize', 'N/A'),
-                    "type": metadata.get('type', 'N/A'),
-                    "founded": metadata.get('founded', 'N/A'),
-                    "content": doc.page_content,
-                    "similarity_score": score
+                    "team_size": doc.get('teamSize', 'N/A'),
+                    "type": doc.get('type', 'N/A'),
+                    "founded": doc.get('founded', 'N/A'),
+                    "content": doc.get('representativeText', ''),
+                    "similarity_score": similarity_score
                 }
-                formatted_results.append(result)
 
-            # Double-check that results match our filters (especially type)
-            verified_results = self._verify_results_match_filters(formatted_results, mongodb_filters)
+                results_with_scores.append(result)
 
-            if len(verified_results) < k and len(formatted_results) > len(verified_results):
-                print(f"Warning: {len(formatted_results) - len(verified_results)} results were filtered out due to filter mismatch")
+            # 4. Sort by similarity score
+            results_with_scores.sort(key=lambda x: x['similarity_score'], reverse=True)
 
-            # Return only up to k verified results
+            # 5. Double-check filters (just to be safe)
+            verified_results = self._verify_results_match_filters(results_with_scores, mongodb_filters)
+
+            # Return top k results
             return verified_results[:k]
 
         except Exception as e:
             print(f"Error during search: {e}")
-            print("Falling back to direct MongoDB query with structured filters...")
-
-            try:
-                raw_results = list(self.collection.find(mongodb_filters).limit(k))
-
-                formatted_results = []
-                for doc in raw_results:
-                    hourly_rate = doc.get('hourlyRate', {})
-                    if isinstance(hourly_rate, dict):
-                        hourly_rate_str = f"{hourly_rate.get('min', 'N/A')}-{hourly_rate.get('max', 'N/A')} {hourly_rate.get('currency', 'USD')}"
-                    else:
-                        hourly_rate_str = str(hourly_rate)
-
-                    result = {
-                        "id": str(doc.get('_id', 'Unknown ID')),
-                        "name": doc.get('name', 'Unknown Name'),
-                        "hourly_rate": hourly_rate_str,
-                        "team_size": doc.get('teamSize', 'N/A'),
-                        "type": doc.get('type', 'N/A'),
-                        "founded": doc.get('founded', 'N/A'),
-                        "content": doc.get('representativeText', ''),
-                        "similarity_score": 0.0
-                    }
-                    formatted_results.append(result)
-
-                # Double-check filters here too
-                verified_results = self._verify_results_match_filters(formatted_results, mongodb_filters)
-                return verified_results[:k]
-
-            except Exception as e2:
-                print(f"Fallback also failed: {e2}")
-                return []
+            return []
 
     def close(self):
         """Close the MongoDB connection"""
@@ -368,44 +366,12 @@ class HybridSearchSystem:
 
 
 def main():
-    search_engine = HybridSearchSystem()
+    search_engine = DirectMongoSemanticSearch()
 
-    print("\n=== Hybrid Search System (LLM + MongoDB + Vector Search) ===")
+    print("\n=== Direct MongoDB Query with Semantic Search ===")
     print("Type 'quit' to exit")
-    print("\nIMPORTANT: Make sure your MongoDB Atlas Vector Search index includes these fields:")
-    print("- Vector field: 'embedding'")
-    print("- Filter fields: 'type', 'teamSize', 'hourlyRate.min', 'hourlyRate.max', 'founded'")
-    print("\nRecommended index definition:")
-    print("""{
-  "fields": [
-    {
-      "numDimensions": 2048,
-      "path": "embedding",
-      "similarity": "cosine",
-      "type": "vector"
-    },
-    {
-      "path": "type",
-      "type": "filter"
-    },
-    {
-      "path": "teamSize",
-      "type": "filter" 
-    },
-    {
-      "path": "founded",
-      "type": "filter"
-    },
-    {
-      "path": "hourlyRate.min",
-      "type": "filter"
-    },
-    {
-      "path": "hourlyRate.max",
-      "type": "filter"
-    }
-  ]
-}""")
+    print("\nThis system first applies MongoDB filters directly to the collection")
+    print("Then applies semantic search to the filtered results")
 
     try:
         while True:
@@ -431,7 +397,7 @@ def main():
                 print("No results found.")
     finally:
         search_engine.close()
-        print("\nThank you for using Hybrid Search System. Goodbye!")
+        print("\nThank you for using Direct MongoDB Query with Semantic Search. Goodbye!")
 
 
 if __name__ == "__main__":
