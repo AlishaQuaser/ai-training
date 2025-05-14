@@ -26,10 +26,9 @@ def setup_embeddings():
         print('You need to set your environment variable OPENAI_API_KEY')
         exit(1)
 
-    # Import at the top of your file
 
     embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-large",  # or "text-embedding-3-small" for a cheaper option
+        model="text-embedding-3-large",
         openai_api_key=api_key,
         dimensions=2048
     )
