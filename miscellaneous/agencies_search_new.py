@@ -5,7 +5,6 @@ from typing import Dict, List, Any, Tuple
 import re
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from pymongo import MongoClient
-import numpy as np
 
 load_dotenv()
 
@@ -50,6 +49,13 @@ class QueryParser:
         
         3. hourlyRate: MEDIUM PRIORITY
            - Parse hourly rate requirements, including currency, operators, and ranges
+           - Include currency specification if mentioned (USD, EUR, GBP, etc.)
+           - IMPORTANT: For single threshold values, prioritize filtering on min values:
+             - "under $100" should be interpreted as hourlyRate: {"min": {"$lt": 100}}
+             - "less than $150" should be interpreted as hourlyRate: {"min": {"$lt": 150}}
+             - "maximum $200" should be interpreted as hourlyRate: {"min": {"$lte": 200}}
+           - For ranges, use both min and max:
+             - "$100-200" should be interpreted as hourlyRate: {"min": {"$gte": 100}, "max": {"$lte": 200}}
         
         4. founded: LOWER PRIORITY
            - Parse founding year requirements if mentioned
@@ -63,9 +69,12 @@ class QueryParser:
         - If text contains any variant of "freelancers", "individuals", "contractors", "lone developer": type = "freelancer" (NEVER match agencies)
         - "200+ members" → teamSize: {"$gt": 200}  (STRICTLY greater than, not greater than or equal)
         - "at least 50 people" → teamSize: {"$gte": 50}
-        - "charging $200-300/hour" → hourlyRate: {"min": {"$lte": 300}, "max": {"$gte": 200}}
+        - "charging $200-300/hour" → hourlyRate: {"min": {"$gte": 200}, "max": {"$lte": 300}}
         - "less than $150 per hour" → hourlyRate: {"min": {"$lt": 150}}
+        - "under $100/hour" → hourlyRate: {"min": {"$lt": 100}}
+        - "maximum $200 hourly" → hourlyRate: {"min": {"$lte": 200}}
         - "founded after 2015" → founded: {"$gt": 2015}
+        - "hourly rate in EUR" → hourlyRate: {"currency": "EUR"}
         
         Your response should be a valid JSON object with no additional text.
         """
@@ -98,11 +107,10 @@ class QueryParser:
             return {}, query
 
 
-class DirectMongoSemanticSearch:
+class MongoDBVectorSearch:
     """
-    Direct MongoDB query with semantic search applied to filtered results
-    - First applies MongoDB query filters
-    - Then applies semantic search to the filtered documents
+    MongoDB vector search with filters
+    - Uses MongoDB Atlas vector search for combining semantic search and filtering
     """
 
     def __init__(self):
@@ -125,156 +133,128 @@ class DirectMongoSemanticSearch:
         )
 
         self.query_parser = QueryParser()
-        self.metadata_field_names = ["_id", "name", "hourlyRate", "teamSize", "type", "founded", "representativeText"]
+        self.vector_search_index = "agencies_search_index"
 
-    def _transform_filters_for_mongodb(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+    def _transform_filters_for_atlas_search(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Transform parsed filters into MongoDB query format
+        Transform parsed filters into MongoDB Atlas Search filter format
 
         Args:
             filters: The filters dictionary from the query parser
 
         Returns:
-            MongoDB-compatible query filter
+            List of Atlas Search filter operators
         """
-        mongodb_filters = {}
+        search_filters = []
 
         if "type" in filters:
-            mongodb_filters["type"] = filters["type"]
+            search_filters.append({
+                "equals": {
+                    "path": "type",
+                    "value": filters["type"]
+                }
+            })
             print(f"Strictly filtering by type: {filters['type']}")
 
         if "teamSize" in filters:
-            mongodb_filters["teamSize"] = filters["teamSize"]
-            if "$gt" in filters["teamSize"]:
-                print(f"Filtering by team size > {filters['teamSize']['$gt']}")
-            elif "$gte" in filters["teamSize"]:
-                print(f"Filtering by team size >= {filters['teamSize']['$gte']}")
-            elif "$lt" in filters["teamSize"]:
-                print(f"Filtering by team size < {filters['teamSize']['$lt']}")
-            elif "$lte" in filters["teamSize"]:
-                print(f"Filtering by team size <= {filters['teamSize']['$lte']}")
+            team_size_filter = filters["teamSize"]
+            range_filter = {"path": "teamSize", "gt": None, "gte": None, "lt": None, "lte": None}
+
+            if "$gt" in team_size_filter:
+                range_filter["gt"] = team_size_filter["$gt"]
+                print(f"Filtering by team size > {team_size_filter['$gt']}")
+            if "$gte" in team_size_filter:
+                range_filter["gte"] = team_size_filter["$gte"]
+                print(f"Filtering by team size >= {team_size_filter['$gte']}")
+            if "$lt" in team_size_filter:
+                range_filter["lt"] = team_size_filter["$lt"]
+                print(f"Filtering by team size < {team_size_filter['$lt']}")
+            if "$lte" in team_size_filter:
+                range_filter["lte"] = team_size_filter["$lte"]
+                print(f"Filtering by team size <= {team_size_filter['$lte']}")
+
+            # Remove None values
+            range_filter = {k: v for k, v in range_filter.items() if v is not None}
+            if len(range_filter) > 1:  # More than just the path
+                search_filters.append({"range": range_filter})
 
         if "hourlyRate" in filters:
             hourly_rate_filter = filters["hourlyRate"]
 
             if "min" in hourly_rate_filter:
                 for op, value in hourly_rate_filter["min"].items():
-                    mongodb_filters["hourlyRate.min"] = {op: value}
-                    print(f"Filtering by hourly rate minimum {op} {value}")
+                    range_filter = {"path": "hourlyRate.min"}
+                    if op == "$lt":
+                        range_filter["lt"] = value
+                        print(f"Filtering by hourly rate minimum < {value}")
+                    elif op == "$lte":
+                        range_filter["lte"] = value
+                        print(f"Filtering by hourly rate minimum <= {value}")
+                    elif op == "$gt":
+                        range_filter["gt"] = value
+                        print(f"Filtering by hourly rate minimum > {value}")
+                    elif op == "$gte":
+                        range_filter["gte"] = value
+                        print(f"Filtering by hourly rate minimum >= {value}")
+                    search_filters.append({"range": range_filter})
 
             if "max" in hourly_rate_filter:
                 for op, value in hourly_rate_filter["max"].items():
-                    mongodb_filters["hourlyRate.max"] = {op: value}
-                    print(f"Filtering by hourly rate maximum {op} {value}")
+                    range_filter = {"path": "hourlyRate.max"}
+                    if op == "$lt":
+                        range_filter["lt"] = value
+                        print(f"Filtering by hourly rate maximum < {value}")
+                    elif op == "$lte":
+                        range_filter["lte"] = value
+                        print(f"Filtering by hourly rate maximum <= {value}")
+                    elif op == "$gt":
+                        range_filter["gt"] = value
+                        print(f"Filtering by hourly rate maximum > {value}")
+                    elif op == "$gte":
+                        range_filter["gte"] = value
+                        print(f"Filtering by hourly rate maximum >= {value}")
+                    search_filters.append({"range": range_filter})
+
+            if "currency" in hourly_rate_filter:
+                search_filters.append({
+                    "equals": {
+                        "path": "hourlyRate.currency",
+                        "value": hourly_rate_filter["currency"]
+                    }
+                })
+                print(f"Filtering by hourly rate currency: {hourly_rate_filter['currency']}")
 
         if "founded" in filters:
-            mongodb_filters["founded"] = filters["founded"]
-            if "$gt" in filters["founded"]:
-                print(f"Filtering by founded > {filters['founded']['$gt']}")
-            elif "$gte" in filters["founded"]:
-                print(f"Filtering by founded >= {filters['founded']['$gte']}")
-            elif "$lt" in filters["founded"]:
-                print(f"Filtering by founded < {filters['founded']['$lt']}")
-            elif "$lte" in filters["founded"]:
-                print(f"Filtering by founded <= {filters['founded']['$lte']}")
+            founded_filter = filters["founded"]
+            range_filter = {"path": "founded", "gt": None, "gte": None, "lt": None, "lte": None}
 
-        return mongodb_filters
+            if "$gt" in founded_filter:
+                range_filter["gt"] = founded_filter["$gt"]
+                print(f"Filtering by founded > {founded_filter['$gt']}")
+            if "$gte" in founded_filter:
+                range_filter["gte"] = founded_filter["$gte"]
+                print(f"Filtering by founded >= {founded_filter['$gte']}")
+            if "$lt" in founded_filter:
+                range_filter["lt"] = founded_filter["$lt"]
+                print(f"Filtering by founded < {founded_filter['$lt']}")
+            if "$lte" in founded_filter:
+                range_filter["lte"] = founded_filter["$lte"]
+                print(f"Filtering by founded <= {founded_filter['$lte']}")
 
-    def _verify_results_match_filters(self, results, filters):
+            # Remove None values
+            range_filter = {k: v for k, v in range_filter.items() if v is not None}
+            if len(range_filter) > 1:  # More than just the path
+                search_filters.append({"range": range_filter})
+
+        return search_filters
+
+    def search(self, query: str, k: int = None) -> List[Dict[str, Any]]:
         """
-        Verify that all results match the specified filters.
-        Used as a double-check to ensure filter integrity.
-
-        Args:
-            results: The search results
-            filters: The MongoDB filters that should be applied
-
-        Returns:
-            List of verified results that actually match the filters
-        """
-        verified_results = []
-
-        for result in results:
-            matches_all_filters = True
-
-            if "type" in filters and result["type"] != filters["type"]:
-                # print(f"Rejected result {result['name']} - type mismatch: {result['type']} ≠ {filters['type']}")
-                matches_all_filters = False
-                continue
-
-            if "teamSize" in filters:
-                team_size = result["team_size"]
-                try:
-                    team_size = int(team_size) if team_size != 'N/A' else 0
-
-                    if "$gt" in filters["teamSize"] and not team_size > filters["teamSize"]["$gt"]:
-                        matches_all_filters = False
-                    elif "$gte" in filters["teamSize"] and not team_size >= filters["teamSize"]["$gte"]:
-                        matches_all_filters = False
-                    elif "$lt" in filters["teamSize"] and not team_size < filters["teamSize"]["$lt"]:
-                        matches_all_filters = False
-                    elif "$lte" in filters["teamSize"] and not team_size <= filters["teamSize"]["$lte"]:
-                        matches_all_filters = False
-                except (ValueError, TypeError):
-                    matches_all_filters = False
-
-            if "founded" in filters:
-                founded = result["founded"]
-                try:
-                    founded = int(founded) if founded != 'N/A' else 0
-
-                    if "$gt" in filters["founded"] and not founded > filters["founded"]["$gt"]:
-                        matches_all_filters = False
-                    elif "$gte" in filters["founded"] and not founded >= filters["founded"]["$gte"]:
-                        matches_all_filters = False
-                    elif "$lt" in filters["founded"] and not founded < filters["founded"]["$lt"]:
-                        matches_all_filters = False
-                    elif "$lte" in filters["founded"] and not founded <= filters["founded"]["$lte"]:
-                        matches_all_filters = False
-                except (ValueError, TypeError):
-                    matches_all_filters = False
-
-            if matches_all_filters:
-                verified_results.append(result)
-            else:
-                print(f"Rejected result {result['name']} - failed to match all filters")
-
-        return verified_results
-
-    def _calculate_semantic_similarity(self, query_embedding, document_embedding):
-        """
-        Calculate cosine similarity between query embedding and document embedding
-
-        Args:
-            query_embedding: The embedding vector of the query
-            document_embedding: The embedding vector of the document
-
-        Returns:
-            Cosine similarity score (higher means more similar)
-        """
-        if isinstance(query_embedding, list):
-            query_embedding = np.array(query_embedding)
-        if isinstance(document_embedding, list):
-            document_embedding = np.array(document_embedding)
-
-        dot_product = np.dot(query_embedding, document_embedding)
-        query_norm = np.linalg.norm(query_embedding)
-        doc_norm = np.linalg.norm(document_embedding)
-
-        if query_norm == 0 or doc_norm == 0:
-            return 0.0
-
-        similarity = dot_product / (query_norm * doc_norm)
-        return float(similarity)
-
-    def search(self, query: str, k: int = 5, max_filter_results: int = 100) -> List[Dict[str, Any]]:
-        """
-        Perform direct MongoDB query followed by semantic search
+        Perform MongoDB vector search with filters
 
         Args:
             query: Natural language query string
-            k: Number of final results to return
-            max_filter_results: Maximum number of documents to retrieve from MongoDB
+            k: Number of results to return (None means return all)
 
         Returns:
             List of search results with scores
@@ -283,54 +263,106 @@ class DirectMongoSemanticSearch:
         print(f"Extracted filters: {json.dumps(filters, indent=2)}")
         print(f"Semantic query: {semantic_query}")
 
-        mongodb_filters = self._transform_filters_for_mongodb(filters)
-        print(f"MongoDB filters: {json.dumps(mongodb_filters, indent=2)}")
+        search_filters = self._transform_filters_for_atlas_search(filters)
+        print(f"Atlas Search filters: {json.dumps(search_filters, indent=2)}")
 
         try:
-            print(f"Executing direct MongoDB query with filters...")
-            cursor = self.collection.find(mongodb_filters).limit(max_filter_results)
-            filtered_docs = list(cursor)
-            filtered_count = len(filtered_docs)
-            print(f"Retrieved {filtered_count} documents from MongoDB")
-
-            if not filtered_docs:
-                print("No documents matched the filters")
-                return []
-
-            if filtered_count <= k:
-                print(f"Warning: Only {filtered_count} documents matched filters (less than requested {k} results)")
-            else:
-                print(f"Performing semantic search on {filtered_count} filtered documents")
-
             print(f"Generating embedding for semantic query: '{semantic_query}'")
             query_embedding = self.embeddings.embed_query(semantic_query)
 
-            results_with_scores = []
-            docs_with_embeddings = 0
-            for doc in filtered_docs:
-                if 'embedding' not in doc or not doc['embedding']:
-                    if 'representativeText' in doc and doc['representativeText']:
-                        print(f"Generating embedding for document: {doc.get('name', 'Unknown')}")
-                        doc['embedding'] = self.embeddings.embed_query(doc['representativeText'])
-                        self.collection.update_one(
-                            {"_id": doc["_id"]},
-                            {"$set": {"embedding": doc['embedding']}}
-                        )
-                    else:
-                        print(f"Skipping document with no text to embed: {doc.get('name', 'Unknown')}")
-                        continue
+            limit = k if k is not None else 10000
 
-                docs_with_embeddings += 1
+            # Create the search stage
+            search_stage = {
+                "$search": {
+                    "index": self.vector_search_index,
+                }
+            }
 
-                similarity_score = self._calculate_semantic_similarity(query_embedding, doc['embedding'])
+            # If we have filters, use the knnBeta directly and apply filters at the aggregation level
+            if search_filters:
+                # Use knnBeta for vector search
+                search_stage["$search"]["knnBeta"] = {
+                    "vector": query_embedding,
+                    "path": "embedding",
+                    "k": limit
+                }
+            else:
+                # No filters, just use knnBeta directly
+                search_stage["$search"]["knnBeta"] = {
+                    "vector": query_embedding,
+                    "path": "embedding",
+                    "k": limit
+                }
 
+            pipeline = [
+                search_stage
+            ]
+
+            # If we have filters, apply them after the vector search using standard MongoDB query operators
+            if search_filters:
+                # Convert Atlas Search filters back to MongoDB filters for post-search filtering
+                mongo_filters = {}
+
+                for filter_item in search_filters:
+                    if "equals" in filter_item:
+                        path = filter_item["equals"]["path"]
+                        value = filter_item["equals"]["value"]
+                        mongo_filters[path] = value
+
+                    elif "range" in filter_item:
+                        range_filter = filter_item["range"]
+                        path = range_filter["path"]
+                        mongo_path_filter = {}
+
+                        if "gt" in range_filter:
+                            mongo_path_filter["$gt"] = range_filter["gt"]
+                        if "gte" in range_filter:
+                            mongo_path_filter["$gte"] = range_filter["gte"]
+                        if "lt" in range_filter:
+                            mongo_path_filter["$lt"] = range_filter["lt"]
+                        if "lte" in range_filter:
+                            mongo_path_filter["$lte"] = range_filter["lte"]
+
+                        mongo_filters[path] = mongo_path_filter
+
+                # Add a match stage to filter results after vector search
+                if mongo_filters:
+                    pipeline.append({"$match": mongo_filters})
+
+            # Add projection stage
+            pipeline.append({
+                "$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "hourlyRate": 1,
+                    "teamSize": 1,
+                    "type": 1,
+                    "founded": 1,
+                    "representativeText": 1,
+                    "score": {"$meta": "searchScore"}
+                }
+            })
+
+            print(f"Executing MongoDB vector search pipeline...")
+            cursor = self.collection.aggregate(pipeline)
+            results = list(cursor)
+            results_count = len(results)
+            print(f"Retrieved {results_count} documents from MongoDB vector search")
+
+            if not results:
+                print("No documents matched the query")
+                return []
+
+            formatted_results = []
+            for doc in results:
                 hourly_rate = doc.get('hourlyRate', {})
                 if isinstance(hourly_rate, dict):
                     hourly_rate_str = f"{hourly_rate.get('min', 'N/A')}-{hourly_rate.get('max', 'N/A')} {hourly_rate.get('currency', 'USD')}"
                 else:
                     hourly_rate_str = str(hourly_rate)
 
-                result = {
+                formatted_result = {
                     "id": str(doc.get('_id', 'Unknown ID')),
                     "name": doc.get('name', 'Unknown Name'),
                     "hourly_rate": hourly_rate_str,
@@ -338,22 +370,13 @@ class DirectMongoSemanticSearch:
                     "type": doc.get('type', 'N/A'),
                     "founded": doc.get('founded', 'N/A'),
                     "content": doc.get('representativeText', ''),
-                    "similarity_score": similarity_score
+                    "similarity_score": doc.get('score', 0.0)
                 }
 
-                results_with_scores.append(result)
+                formatted_results.append(formatted_result)
 
-            if docs_with_embeddings < filtered_count:
-                print(f"Warning: {filtered_count - docs_with_embeddings} documents were skipped due to missing text")
-
-            results_with_scores.sort(key=lambda x: x['similarity_score'], reverse=True)
-
-            verified_results = self._verify_results_match_filters(results_with_scores, mongodb_filters)
-            print(f"Verified {len(verified_results)} results match all filters after semantic scoring")
-
-            final_result_count = min(k, len(verified_results))
-            print(f"Returning top {final_result_count} results")
-            return verified_results[:final_result_count]
+            print(f"Returning {len(formatted_results)} results")
+            return formatted_results
 
         except Exception as e:
             print(f"Error during search: {e}")
@@ -366,9 +389,9 @@ class DirectMongoSemanticSearch:
 
 
 def main():
-    search_engine = DirectMongoSemanticSearch()
+    search_engine = MongoDBVectorSearch()
 
-    print("\n=== Direct MongoDB Query with Semantic Search ===")
+    print("\n=== MongoDB Vector Search with Filters ===")
     print("Type 'quit' to exit")
 
     try:
@@ -378,7 +401,7 @@ def main():
                 break
 
             print("\nProcessing query...")
-            results = search_engine.search(query, k=5)
+            results = search_engine.search(query)
 
             if results:
                 print("\n=== Search Results ===")
@@ -390,7 +413,7 @@ def main():
                     print(f"Team Size: {result['team_size']}")
                     print(f"Hourly Rate: {result['hourly_rate']}")
                     print(f"Founded: {result['founded']}")
-                    print(f"Content: {result['content'][:200]}...")
+                    print(f"Content: {result['content']}...")
             else:
                 print("No results found.")
     finally:
