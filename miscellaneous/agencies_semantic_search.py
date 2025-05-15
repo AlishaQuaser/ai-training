@@ -21,7 +21,7 @@ class QueryParser:
         self.llm = ChatOpenAI(
             model="gpt-4",
             openai_api_key=self.api_key,
-            temperature=0
+            temperature=0,
         )
 
     def parse_query(self, query: str) -> Tuple[Dict[str, Any], str]:
@@ -109,11 +109,11 @@ class QueryParser:
             return {}, query
 
 
-class DirectMongoSemanticSearch:
+class AtlasVectorSearch:
     """
-    Direct MongoDB query with semantic search applied to filtered results
+    MongoDB Atlas Vector Search implementation
     - First applies MongoDB query filters
-    - Then applies semantic search to the filtered documents
+    - Then applies Atlas Vector Search to the filtered documents
     """
 
     def __init__(self):
@@ -124,6 +124,9 @@ class DirectMongoSemanticSearch:
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client["hiretalentt"]
         self.collection = self.db["agencies_new"]
+
+        self.index_name = "agencies_search_index"
+        self.embedding_field = "embedding"
 
         self.api_key = os.getenv('OPENAI_API_KEY')
         if self.api_key is None:
@@ -203,41 +206,14 @@ class DirectMongoSemanticSearch:
 
         return mongodb_filters
 
-
-    def _calculate_semantic_similarity(self, query_embedding, document_embedding):
+    def search(self, query: str, k: int = 5, max_vector_results: int = 100) -> List[Dict[str, Any]]:
         """
-        Calculate cosine similarity between query embedding and document embedding
-
-        Args:
-            query_embedding: The embedding vector of the query
-            document_embedding: The embedding vector of the document
-
-        Returns:
-            Cosine similarity score (higher means more similar)
-        """
-        if isinstance(query_embedding, list):
-            query_embedding = np.array(query_embedding)
-        if isinstance(document_embedding, list):
-            document_embedding = np.array(document_embedding)
-
-        dot_product = np.dot(query_embedding, document_embedding)
-        query_norm = np.linalg.norm(query_embedding)
-        doc_norm = np.linalg.norm(document_embedding)
-
-        if query_norm == 0 or doc_norm == 0:
-            return 0.0
-
-        similarity = dot_product / (query_norm * doc_norm)
-        return float(similarity)
-
-    def search(self, query: str, k: int = 5, max_filter_results: int = 100) -> List[Dict[str, Any]]:
-        """
-        Perform direct MongoDB query followed by semantic search
+        Perform Atlas Vector Search first, then apply filters to the results
 
         Args:
             query: Natural language query string
-            k: Number of final results to return
-            max_filter_results: Maximum number of documents to retrieve from MongoDB
+            k: Number of final results to return after filtering
+            max_vector_results: Maximum number of documents to retrieve from initial vector search
 
         Returns:
             List of search results with scores
@@ -250,28 +226,118 @@ class DirectMongoSemanticSearch:
         print(f"MongoDB filters: {json.dumps(mongodb_filters, indent=2)}")
 
         try:
-            print(f"Executing direct MongoDB query with filters...")
-            cursor = self.collection.find(mongodb_filters).limit(max_filter_results)
-            filtered_docs = list(cursor)
-            filtered_count = len(filtered_docs)
-            print(f"Retrieved {filtered_count} documents from MongoDB")
-
-            if not filtered_docs:
-                print("No documents matched the filters")
-                return []
-
-            if filtered_count <= k:
-                print(f"Warning: Only {filtered_count} documents matched filters (less than requested {k} results)")
-            else:
-                print(f"Performing semantic search on {filtered_count} filtered documents")
-
             print(f"Generating embedding for semantic query: '{semantic_query}'")
             query_embedding = self.embeddings.embed_query(semantic_query)
 
-            results_with_scores = []
-            for doc in filtered_docs:
-                similarity_score = self._calculate_semantic_similarity(query_embedding, doc['embedding'])
+            print(f"Performing Atlas Vector Search on collection")
 
+            pipeline = [
+                {"$vectorSearch": {
+                    "index": self.index_name,
+                    "path": self.embedding_field,
+                    "queryVector": query_embedding,
+                    "numCandidates": 550,
+                    "limit": max_vector_results
+                }},
+
+                {"$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "hourlyRate": 1,
+                    "teamSize": 1,
+                    "type": 1,
+                    "founded": 1,
+                    "representativeText": 1,
+                    "similarity_score": {"$meta": "vectorSearchScore"}
+                }}
+            ]
+
+            vector_results = list(self.collection.aggregate(pipeline))
+            print(f"Retrieved {len(vector_results)} documents from Atlas Vector Search")
+
+            if not vector_results:
+                print("No results found from vector search")
+                return []
+
+            print(f"Applying filters to vector search results")
+            filtered_results = []
+
+            for doc in vector_results:
+                matches_all_filters = True
+
+                if "type" in mongodb_filters and doc.get("type") != mongodb_filters["type"]:
+                    matches_all_filters = False
+
+                if "teamSize" in mongodb_filters:
+                    team_size = doc.get("teamSize")
+                    if team_size is not None:
+                        for op, value in mongodb_filters["teamSize"].items():
+                            if op == "$gt" and not (team_size > value):
+                                matches_all_filters = False
+                            elif op == "$gte" and not (team_size >= value):
+                                matches_all_filters = False
+                            elif op == "$lt" and not (team_size < value):
+                                matches_all_filters = False
+                            elif op == "$lte" and not (team_size <= value):
+                                matches_all_filters = False
+
+                if "hourlyRate.min" in mongodb_filters:
+                    hourly_rate = doc.get("hourlyRate", {})
+                    if isinstance(hourly_rate, dict):
+                        min_rate = hourly_rate.get("min")
+                        if min_rate is not None:
+                            for op, value in mongodb_filters["hourlyRate.min"].items():
+                                if op == "$gt" and not (min_rate > value):
+                                    matches_all_filters = False
+                                elif op == "$gte" and not (min_rate >= value):
+                                    matches_all_filters = False
+                                elif op == "$lt" and not (min_rate < value):
+                                    matches_all_filters = False
+                                elif op == "$lte" and not (min_rate <= value):
+                                    matches_all_filters = False
+
+                if "hourlyRate.max" in mongodb_filters:
+                    hourly_rate = doc.get("hourlyRate", {})
+                    if isinstance(hourly_rate, dict):
+                        max_rate = hourly_rate.get("max")
+                        if max_rate is not None:
+                            for op, value in mongodb_filters["hourlyRate.max"].items():
+                                if op == "$gt" and not (max_rate > value):
+                                    matches_all_filters = False
+                                elif op == "$gte" and not (max_rate >= value):
+                                    matches_all_filters = False
+                                elif op == "$lt" and not (max_rate < value):
+                                    matches_all_filters = False
+                                elif op == "$lte" and not (max_rate <= value):
+                                    matches_all_filters = False
+
+                if "hourlyRate.currency" in mongodb_filters:
+                    hourly_rate = doc.get("hourlyRate", {})
+                    if isinstance(hourly_rate, dict):
+                        currency = hourly_rate.get("currency")
+                        if currency != mongodb_filters["hourlyRate.currency"]:
+                            matches_all_filters = False
+
+                if "founded" in mongodb_filters:
+                    founded = doc.get("founded")
+                    if founded is not None:
+                        for op, value in mongodb_filters["founded"].items():
+                            if op == "$gt" and not (founded > value):
+                                matches_all_filters = False
+                            elif op == "$gte" and not (founded >= value):
+                                matches_all_filters = False
+                            elif op == "$lt" and not (founded < value):
+                                matches_all_filters = False
+                            elif op == "$lte" and not (founded <= value):
+                                matches_all_filters = False
+
+                if matches_all_filters:
+                    filtered_results.append(doc)
+
+            print(f"After filtering: {len(filtered_results)} documents remain")
+
+            formatted_results = []
+            for doc in filtered_results[:k]:
                 hourly_rate = doc.get('hourlyRate', {})
                 if isinstance(hourly_rate, dict):
                     hourly_rate_str = f"{hourly_rate.get('min', 'N/A')}-{hourly_rate.get('max', 'N/A')} {hourly_rate.get('currency', 'USD')}"
@@ -286,16 +352,12 @@ class DirectMongoSemanticSearch:
                     "type": doc.get('type', 'N/A'),
                     "founded": doc.get('founded', 'N/A'),
                     "content": doc.get('representativeText', ''),
-                    "similarity_score": similarity_score
+                    "similarity_score": doc.get('similarity_score', 0.0)
                 }
 
-                results_with_scores.append(result)
+                formatted_results.append(result)
 
-            results_with_scores.sort(key=lambda x: x['similarity_score'], reverse=True)
-            print(f"Length: {len(results_with_scores)}")
-            final_result_count = min(k, len(results_with_scores))
-            print(f"Returning top {final_result_count} results")
-            return results_with_scores[:final_result_count]
+            return formatted_results
 
         except Exception as e:
             print(f"Error during search: {e}")
@@ -308,9 +370,9 @@ class DirectMongoSemanticSearch:
 
 
 def main():
-    search_engine = DirectMongoSemanticSearch()
+    search_engine = AtlasVectorSearch()
 
-    print("\n=== Direct MongoDB Query with Semantic Search ===")
+    print("\n=== MongoDB Atlas Vector Search ===")
     print("Type 'quit' to exit")
 
     try:
