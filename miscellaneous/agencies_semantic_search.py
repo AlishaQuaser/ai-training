@@ -386,7 +386,7 @@ def main():
             if results:
                 print("\n=== Search Results ===")
                 for i, result in enumerate(results):
-                    print(f"\n--- Result {i+1} (Similarity Score: {result['similarity_score']:.4f}) ---")
+                    print(f"\n--- Result {i+1} (Similarity Score: {result['similarity_score']: .4f}) ---")
                     print(f"ID: {result['id']}")
                     print(f"Name: {result['name']}")
                     print(f"Type: {result['type']}")
