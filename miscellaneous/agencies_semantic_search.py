@@ -393,7 +393,7 @@ def main():
                     print(f"Team Size: {result['team_size']}")
                     print(f"Hourly Rate: {result['hourly_rate']}")
                     print(f"Founded: {result['founded']}")
-                    print(f"Content: {result['content']}...")
+                    print(f"Content: {result['content']}")
             else:
                 print("No results found.")
     finally:
