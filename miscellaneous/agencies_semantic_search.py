@@ -9,6 +9,7 @@ import numpy as np
 
 load_dotenv()
 
+
 class QueryParser:
     """Parse natural language queries into structured filters and semantic search components"""
 
@@ -291,14 +292,10 @@ class DirectMongoSemanticSearch:
                 results_with_scores.append(result)
 
             results_with_scores.sort(key=lambda x: x['similarity_score'], reverse=True)
-
+            print(f"Length: {len(results_with_scores)}")
             final_result_count = min(k, len(results_with_scores))
             print(f"Returning top {final_result_count} results")
             return results_with_scores[:final_result_count]
-
-        except Exception as e:
-            print(f"Error during search: {e}")
-            return []
 
         except Exception as e:
             print(f"Error during search: {e}")
