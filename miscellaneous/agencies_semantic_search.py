@@ -5,7 +5,6 @@ from typing import Dict, List, Any, Tuple
 import re
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from pymongo import MongoClient
-import numpy as np
 
 load_dotenv()
 
