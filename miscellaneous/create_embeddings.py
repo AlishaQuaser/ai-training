@@ -36,7 +36,7 @@ def generate_embeddings_for_agencies():
     """Generate and store embeddings for agency representative texts"""
     db = connect_to_mongodb()
 
-    agencies_collection = db["debug"]
+    agencies_collection = db["agencies"]
 
     embeddings_model = setup_embeddings()
 
