@@ -99,6 +99,24 @@ class AgencyGenerator:
 
         return list(unique_skills)
 
+    def get_freelancer_name(self, profile):
+        """Get the freelancer's full name from the profile document"""
+        first_name = profile.get('firstName', '')
+        last_name = profile.get('lastName', '')
+
+        if first_name or last_name:
+            return f"{first_name} {last_name}".strip()
+
+        full_name = profile.get('fullName', '')
+        if full_name:
+            return full_name
+
+        name = profile.get('name', '')
+        if name:
+            return name
+
+        return "Unknown Freelancer"
+
     def generate_representative_text(self, business, profiles_list, case_studies_list):
         """Generate representative text based on the business, profiles and its case studies"""
         business_name = business.get('name', 'Unknown Business')
@@ -111,8 +129,7 @@ class AgencyGenerator:
 
         if is_freelancer:
             profile = profiles_list[0]
-            person_name = profile.get('name', profile.get('fullName', business_name))
-            entity_name = person_name
+            entity_name = self.get_freelancer_name(profile)
         else:
             entity_name = business_name
 
