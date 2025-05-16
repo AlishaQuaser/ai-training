@@ -122,9 +122,9 @@ class AtlasVectorSearch:
 
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client["hiretalentt"]
-        self.collection = self.db["agencies_new"]
+        self.collection = self.db["debug"]
 
-        self.index_name = "agencies_search_index"
+        self.index_name = "debug_index"
         self.embedding_field = "embedding"
 
         self.api_key = os.getenv('OPENAI_API_KEY')
