@@ -37,18 +37,13 @@ class QueryParser:
         You are a query parser that extracts structured filters and semantic intent from natural language search queries.
         You will extract the following structured fields if mentioned, in order of priority:
         
-        1. type: HIGHEST PRIORITY - Must be strictly enforced
-           - For "agency" type: Match when user mentions "agencies", "businesses", "companies", "firms", etc.
-           - For "freelancer" type: Match when user mentions "freelancers", "individuals", "contractors", "lone developer", etc.
-           - If type is specified, it's critical this filter is correctly applied with NO EXCEPTIONS
-        
-        2. teamSize: HIGH PRIORITY
+        1. teamSize: HIGH PRIORITY
            - Parse team size requirements, including operators like >, <, >=, <= or ranges
            - For agencies, this refers to number of team members
            - Be precise about inequalities: "200+" means greater than 200 (NOT greater than or equal)
            - "atleast 200" or "minimum 200" means greater than or equal to 200
         
-        3. hourlyRate: MEDIUM PRIORITY
+        2. hourlyRate: MEDIUM PRIORITY
            - Parse hourly rate requirements, including currency, operators, and ranges
            - Include currency specification if mentioned (USD, EUR, GBP, etc.)
            - IMPORTANT: For single threshold values, prioritize filtering on min values:
@@ -58,7 +53,7 @@ class QueryParser:
            - For ranges, use both min and max:
              - "$100-200" should be interpreted as hourlyRate: {"min": {"$gte": 100}, "max": {"$lte": 200}}
         
-        4. founded: LOWER PRIORITY
+        3. founded: LOWER PRIORITY
            - Parse founding year requirements if mentioned
         
         Return a JSON object with:
@@ -66,8 +61,6 @@ class QueryParser:
         2. "semantic_query": String containing the remaining semantic search intent
         
         Make sure to handle phrases like:
-        - If text contains any variant of "agencies", "companies", "businesses", "firms": type = "agency" (NEVER match freelancers)
-        - If text contains any variant of "freelancers", "individuals", "contractors", "lone developer": type = "freelancer" (NEVER match agencies)
         - "200+ members" → teamSize: {"$gt": 200}  (STRICTLY greater than, not greater than or equal)
         - "at least 50 people" → teamSize: {"$gte": 50}
         - "charging $200-300/hour" → hourlyRate: {"min": {"$gte": 200}, "max": {"$lte": 300}}
@@ -122,9 +115,9 @@ class AtlasVectorSearch:
 
         self.client = MongoClient(self.mongo_uri)
         self.db = self.client["hiretalentt"]
-        self.collection = self.db["debug"]
+        self.collection = self.db["agencies"]
 
-        self.index_name = "debug_index"
+        self.index_name = "agencies_vector_index"
         self.embedding_field = "embedding"
 
         self.api_key = os.getenv('OPENAI_API_KEY')
@@ -138,7 +131,7 @@ class AtlasVectorSearch:
         )
 
         self.query_parser = QueryParser()
-        self.metadata_field_names = ["_id", "name", "hourlyRate", "teamSize", "type", "founded", "representativeText"]
+        self.metadata_field_names = ["_id", "name", "hourlyRate", "teamSize", "founded", "representativeText"]
 
     def _transform_filters_for_mongodb(self, filters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -151,10 +144,6 @@ class AtlasVectorSearch:
             MongoDB-compatible query filter
         """
         mongodb_filters = {}
-
-        if "type" in filters:
-            mongodb_filters["type"] = filters["type"]
-            print(f"Strictly filtering by type: {filters['type']}")
 
         if "teamSize" in filters:
             mongodb_filters["teamSize"] = filters["teamSize"]
@@ -244,7 +233,6 @@ class AtlasVectorSearch:
                     "name": 1,
                     "hourlyRate": 1,
                     "teamSize": 1,
-                    "type": 1,
                     "founded": 1,
                     "representativeText": 1,
                     "similarity_score": {"$meta": "vectorSearchScore"}
@@ -263,9 +251,6 @@ class AtlasVectorSearch:
 
             for doc in vector_results:
                 matches_all_filters = True
-
-                if "type" in mongodb_filters and doc.get("type") != mongodb_filters["type"]:
-                    matches_all_filters = False
 
                 if "teamSize" in mongodb_filters:
                     team_size = doc.get("teamSize")
@@ -348,7 +333,6 @@ class AtlasVectorSearch:
                     "name": doc.get('name', 'Unknown Name'),
                     "hourly_rate": hourly_rate_str,
                     "team_size": doc.get('teamSize', 'N/A'),
-                    "type": doc.get('type', 'N/A'),
                     "founded": doc.get('founded', 'N/A'),
                     "content": doc.get('representativeText', ''),
                     "similarity_score": doc.get('similarity_score', 0.0)
@@ -389,7 +373,6 @@ def main():
                     print(f"\n--- Result {i+1} (Similarity Score: {result['similarity_score']: .4f}) ---")
                     print(f"ID: {result['id']}")
                     print(f"Name: {result['name']}")
-                    print(f"Type: {result['type']}")
                     print(f"Team Size: {result['team_size']}")
                     print(f"Hourly Rate: {result['hourly_rate']}")
                     print(f"Founded: {result['founded']}")
