@@ -194,7 +194,7 @@ class AtlasVectorSearch:
 
         return mongodb_filters
 
-    def search(self, query: str, k: int = 5, max_vector_results: int = 100) -> List[Dict[str, Any]]:
+    def search(self, query: str, k: int = 5, max_vector_results: int = 616) -> List[Dict[str, Any]]:
         """
         Perform Atlas Vector Search first, then apply filters to the results
 
@@ -224,7 +224,7 @@ class AtlasVectorSearch:
                     "index": self.index_name,
                     "path": self.embedding_field,
                     "queryVector": query_embedding,
-                    "numCandidates": 550,
+                    "numCandidates": 616,
                     "limit": max_vector_results
                 }},
 
