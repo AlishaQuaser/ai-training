@@ -32,7 +32,7 @@ def clean_json_documents(json_file_path, output_file_path=None):
 
             cleaned_doc = {key: value for key, value in doc.items()
                            # if key != '_id' and key != 'domain'
-                           if key != 'domain'}
+                           if key != 'embedding'}
 
             modified_data.append(cleaned_doc)
             processed_count += 1
